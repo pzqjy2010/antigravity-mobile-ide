@@ -762,47 +762,38 @@ async def system_screenshot(title: str = None, mode: str = "window", quality: in
     - screen_0, screen_1...: 截取指定索引的纯净物理显示器
     """
     try:
-        from PIL import ImageGrab
+        import mss
+        from PIL import Image
     except ImportError:
-        raise HTTPException(500, "需要安装 Pillow: pip install Pillow")
+        raise HTTPException(500, "需要安装 mss 和 Pillow: pip install mss Pillow")
 
     import io
     import time
 
+    def _mss_to_pil(sct_img):
+        return Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+
+    sct = mss.mss()
+
     if mode == "all":
-        img = ImageGrab.grab(all_screens=True)
+        img = _mss_to_pil(sct.grab(sct.monitors[0]))
     elif mode.startswith("screen_"):
         try:
             screen_idx = int(mode.split("_")[1])
-            import ctypes
-            from ctypes import wintypes
-            monitors = []
-            def _cb(hMonitor, hdcMonitor, lprcMonitor, dwData):
-                r = lprcMonitor.contents
-                monitors.append((r.left, r.top, r.right, r.bottom))
-                return True
-            cb = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
-            ctypes.windll.user32.EnumDisplayMonitors(0, 0, cb(0), 0)
-            
-            # Windows 的多屏 bbox 存在负数坐标，Pillow grab(bbox=...) 处理跨屏 bbox 有时会有偏移，保险起见加上 all_screens=True
-            if screen_idx < len(monitors):
-                img = ImageGrab.grab(bbox=monitors[screen_idx], all_screens=True)
+            # mss.monitors[0] 是虚拟全栈拼接，1 开始是各个物理屏幕
+            if screen_idx + 1 < len(sct.monitors):
+                img = _mss_to_pil(sct.grab(sct.monitors[screen_idx + 1]))
             else:
-                img = ImageGrab.grab(all_screens=True)
+                img = _mss_to_pil(sct.grab(sct.monitors[0]))
         except Exception as e:
             print("Capture screen index error:", e)
-            img = ImageGrab.grab(all_screens=True)
+            img = _mss_to_pil(sct.grab(sct.monitors[0]))
     elif title:
         try:
             import ctypes
             from ctypes import wintypes
             user32 = ctypes.windll.user32
             dwmapi = ctypes.windll.dwmapi
-
-            try:
-                user32.SetProcessDPIAware()
-            except:
-                pass
 
             def _find_window(keyword):
                 results = []
@@ -869,10 +860,13 @@ async def system_screenshot(title: str = None, mode: str = "window", quality: in
                     mi.cbSize = ctypes.sizeof(MONITORINFO)
                     if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
                         m_rect = mi.rcMonitor
-                        mon_bbox = (m_rect.left, m_rect.top, m_rect.right, m_rect.bottom)
-                        img = ImageGrab.grab(bbox=mon_bbox, all_screens=True)
+                        bbox = {"left": m_rect.left, "top": m_rect.top, "width": m_rect.right - m_rect.left, "height": m_rect.bottom - m_rect.top}
+                        try:
+                            img = _mss_to_pil(sct.grab(bbox))
+                        except Exception:
+                            img = _mss_to_pil(sct.grab(sct.monitors[0]))
                     else:
-                        img = ImageGrab.grab(all_screens=True)
+                        img = _mss_to_pil(sct.grab(sct.monitors[0]))
                 else:
                     user32.ShowWindow(hwnd, 9)
                     _force_foreground(user32, hwnd)
@@ -883,18 +877,26 @@ async def system_screenshot(title: str = None, mode: str = "window", quality: in
                     if res != 0:
                         user32.GetWindowRect(hwnd, ctypes.byref(rect))
                         
-                    bbox = (rect.left, rect.top, rect.right, rect.bottom)
-                    if bbox[0] < -1000 or bbox[1] < -1000 or bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
-                        img = ImageGrab.grab(all_screens=True)
+                    w = rect.right - rect.left
+                    h = rect.bottom - rect.top
+                    if w <= 0 or h <= 0 or rect.left < -10000:
+                        img = _mss_to_pil(sct.grab(sct.monitors[0]))
                     else:
-                        img = ImageGrab.grab(bbox=bbox)
+                        bbox = {"left": rect.left, "top": rect.top, "width": w, "height": h}
+                        try:
+                            img = _mss_to_pil(sct.grab(bbox))
+                        except Exception:
+                            img = _mss_to_pil(sct.grab(sct.monitors[0]))
             else:
-                img = ImageGrab.grab(all_screens=True)
+                img = _mss_to_pil(sct.grab(sct.monitors[0]))
         except Exception as e:
             print("Window capture error:", e)
-            img = ImageGrab.grab(all_screens=True)
+            img = _mss_to_pil(sct.grab(sct.monitors[0]))
     else:
-        img = ImageGrab.grab(all_screens=True)
+        img = _mss_to_pil(sct.grab(sct.monitors[0]))
+
+    if sct:
+        sct.close()
 
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=quality)
@@ -1014,6 +1016,7 @@ def _enum_windows(title_filter: str = None, process_filter: str = None) -> list:
             return True
         # 多显示器兼容：(-32000,-32000) 表示窗口已最小化
         is_minimized = rect.left <= -30000
+        is_maximized = bool(user32.IsZoomed(hwnd))
         width = max(0, rect.right - rect.left) if not is_minimized else 0
         height = max(0, rect.bottom - rect.top) if not is_minimized else 0
         results.append({
@@ -1027,6 +1030,7 @@ def _enum_windows(title_filter: str = None, process_filter: str = None) -> list:
             "height": height,
             "is_visible": True,
             "is_minimized": is_minimized,
+            "is_maximized": is_maximized,
         })
         return True
 

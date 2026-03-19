@@ -1476,7 +1476,7 @@
         }
 
         // --- 截图查看器 ---
-        let _currentScreenMode = 'window'; 
+        let _currentScreenMode = 'full'; 
         let _monitorCountCache = 0;
 
         function _renderSegments() {
@@ -1514,15 +1514,32 @@
             }
         }
 
-        function showScreenshot(modeOverride = null) {
+        async function showScreenshot(modeOverride = null) {
             if (modeOverride) _currentScreenMode = modeOverride;
+            
+            const modal = document.getElementById('modal-viewer');
+            const isFirstOpen = !modal.classList.contains('open');
+            
+            // 首次打开时，查询当前工作区窗口状态来决定默认模式
+            if (isFirstOpen && !modeOverride) {
+                try {
+                    const res = await fetch(`${BASE_URL}/v1/system/windows?title=Antigravity&process=Antigravity.exe`);
+                    const data = await res.json();
+                    const activeWin = (data.windows || []).find(w => {
+                        const inst = state.instances.find(i => i.port === state.activePort);
+                        return inst && w.title.includes(inst.display_name || inst.workspace);
+                    }) || (data.windows || [])[0];
+                    if (activeWin) {
+                        _currentScreenMode = activeWin.is_maximized ? 'full' : 'window';
+                    }
+                } catch(e) { /* 查询失败保持默认 full */ }
+            }
             
             const isWindow = _currentScreenMode === 'window';
             const isFull = _currentScreenMode === 'full';
             const isAll = _currentScreenMode === 'all';
             
-            const modal = document.getElementById('modal-viewer');
-            if (!modal.classList.contains('open')) {
+            if (isFirstOpen) {
                 modal.classList.add('open');
                 modal.innerHTML = `
                     <div style="flex:4; position:relative; background:#000; display:flex; flex-direction:column; overflow:hidden;">

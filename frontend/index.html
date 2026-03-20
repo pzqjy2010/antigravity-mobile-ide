@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Antigravity Mobile IDE</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+    <!-- 顶栏 -->
+    <header class="top-nav glass" id="topNav">
+        <div class="nav-row">
+            <div class="instance-selector" id="instanceSelector" onclick="toggleInstanceDropdown()">
+                <span class="status-dot"></span>
+                <span id="instanceName"
+                    style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:'JetBrains Mono',monospace; max-width:160px;">加载中…</span>
+                <span style="font-size:8px; color:var(--text-muted)">▼</span>
+            </div>
+            <div class="model-badge" id="modelSelector"
+                style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                <span id="modelName">加载中…</span> <span style="font-size:8px; opacity:0.7;">▼</span>
+            </div>
+        </div>
+        <div class="nav-row session-bar">
+            <span class="new-chat-btn" id="newChatBtn" onclick="newConversation()">＋ 新对话</span>
+            <span class="session-selector" id="sessionSelector" onclick="toggleSessionDropdown()">
+                <span id="sessionLabel">加载中…</span> <span style="font-size:8px;">▼</span>
+            </span>
+        </div>
+    </header>
+
+    <!-- Instance Dropdown -->
+    <div class="instance-dropdown" id="instanceDropdown"></div>
+    <!-- Session Dropdown -->
+    <div class="instance-dropdown" id="sessionDropdown" style="left:auto; right:16px;"></div>
+    <!-- Model Dropdown -->
+    <div class="model-dropdown" id="modelDropdown"></div>
+
+    <!-- 聊天区 -->
+    <main class="chat-container" id="chatContainer">
+        <!-- 空状态欢迎引导 -->
+        <div id="emptyState"
+            style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:12px; opacity:0.4;">
+            <div style="font-size:48px;">⏳</div>
+            <div style="font-size:16px; font-weight:600;">正在连接…</div>
+            <div style="font-size:13px; color:var(--text-muted); text-align:center; max-width:240px;">正在加载工作区和会话数据</div>
+        </div>
+    </main>
+
+    <!-- 输入框 -->
+    <div class="input-bar glass">
+        <input type="text" id="chatInput" placeholder="输入你想让 AI 做的事情...">
+        <button class="send-btn" id="sendBtn">➤</button>
+    </div>
+
+    <!-- 底部 Dock -->
+    <div class="bottom-dock glass" id="bottomDock">
+        <div class="dock-item" data-drawer="file" title="文件树">📁</div>
+        <div class="dock-item" data-drawer="screen" title="屏幕截图">📷</div>
+        <div class="dock-item" data-drawer="term" title="终端">>_</div>
+        <div class="dock-item" data-drawer="settings" title="设置">⚙️</div>
+    </div>
+
+    <!-- 抽屉结构 -->
+    <div id="drawer-file" class="drawer">
+        <div class="drawer-header">
+            <span>📁 工作区文件</span>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button class="close-btn" onclick="fetchFileTree()" title="刷新">🔄</button>
+                <button class="close-btn" onclick="closeDrawer('file')">✕</button>
+            </div>
+        </div>
+        <div class="drawer-content" id="fileTreeContainer">
+            <div style="color:var(--text-muted)">点击 📁 加载文件树</div>
+        </div>
+    </div>
+    <div id="drawer-term" class="drawer">
+        <div class="drawer-header">
+            <span>>_ 远程终端</span>
+            <button class="close-btn" onclick="closeDrawer('term')">✕</button>
+        </div>
+        <div class="drawer-content" style="display:flex; flex-direction:column;">
+            <div id="termCwd"
+                style="font-size:11px; color:var(--text-muted); margin-bottom:8px; font-family:'JetBrains Mono',monospace;">
+            </div>
+            <div class="term-output" id="termOutput">欢迎使用远程终端 🖥️
+                输入命令并回车执行
+            </div>
+            <div class="term-input-bar">
+                <span style="color:#4ade80; font-weight:bold;">$</span>
+                <input type="text" id="termInput" placeholder="输入命令..."
+                    onkeypress="if(event.key==='Enter') execCommand()">
+                <button onclick="execCommand()">执行</button>
+            </div>
+        </div>
+    </div>
+    <div id="drawer-settings" class="drawer">
+        <div class="drawer-header">
+            <span>⚙️ 设置</span>
+            <button class="close-btn" onclick="closeDrawer('settings')">✕</button>
+        </div>
+        <div class="drawer-content" id="settingsContent"></div>
+    </div>
+
+    <!-- 全屏模态框 (代码查看、截图查看) -->
+    <div id="modal-viewer" class="modal">
+        <div class="drawer-header">
+            <span id="modalTitle">Viewer</span>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <div id="modalActions"></div>
+                <button class="close-btn" onclick="closeModal()">✕ 关闭</button>
+            </div>
+        </div>
+        <div class="drawer-content" id="modalContent" style="padding: 0;"></div>
+    </div>
+
+    <!-- Image Viewer Overlay -->
+    <div id="imgViewerOverlay">
+        <img id="imgViewerImg" />
+        <div id="imgViewerClose" onclick="closeImageViewer()">✕</div>
+        <div id="imgViewerInfo"></div>
+    </div>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+
+</html>

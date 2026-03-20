@@ -30,14 +30,16 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 
 # 添加路径
-_DIR = os.path.dirname(__file__)
-_PARENT = os.path.join(_DIR, "..")
-if _PARENT not in sys.path:
-    sys.path.insert(0, _PARENT)
+_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.normpath(os.path.join(_DIR, ".."))
+_FRONTEND_DIR = os.path.join(_PROJECT_ROOT, "frontend")
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 if _DIR not in sys.path:
     sys.path.insert(0, _DIR)
 
@@ -59,22 +61,21 @@ _default_port: int = 0
 async def _warmup_caches():
     """服务启动后立刻在后台预热重量级缓存，让前端首次访问秒开"""
     async def _do_warmup():
-        await asyncio.sleep(1)  # 等 uvicorn 完全就绪
+        await asyncio.sleep(1)
         import httpx
         base = "http://127.0.0.1:16601"
-        warmup_endpoints = [
-            "/v1/system/processes?main_only=true",  # 进程列表（最重）
-            "/v1/system/info",                       # 系统硬件探针
-            "/v1/instances",                         # LS 实例列表
-        ]
-        for ep in warmup_endpoints:
+        for ep in ["/v1/system/info", "/v1/instances"]:
             try:
                 async with httpx.AsyncClient(timeout=15) as client:
                     await client.get(f"{base}{ep}")
             except Exception:
                 pass
-        print("  🔥 Warmup: 缓存预热完成 (processes + system_info + instances)")
+        # 首次预热进程缓存
+        await _refresh_process_cache()
+        print("  🔥 Warmup: 缓存预热完成")
     asyncio.ensure_future(_do_warmup())
+    # 后台每 30 秒自动刷新进程缓存
+    asyncio.ensure_future(_process_cache_loop())
 
 def _force_foreground(user32, hwnd):
     """通过模拟 Alt 键合法绕过 Windows 前台锁定。"""
@@ -121,9 +122,13 @@ class ModelSwitchRequest(BaseModel):
 
 # ─── Core Endpoints ──────────────────────────────────────────
 
+# 前端静态文件服务（CSS、JS）
+app.mount("/css", StaticFiles(directory=os.path.join(_FRONTEND_DIR, "css")), name="css")
+app.mount("/js", StaticFiles(directory=os.path.join(_FRONTEND_DIR, "js")), name="js")
+
 @app.get("/")
 async def serve_index():
-    return FileResponse(os.path.join(_DIR, "index.html"))
+    return FileResponse(os.path.join(_FRONTEND_DIR, "index.html"))
 
 @app.post("/v1/chat")
 async def chat(req: ChatRequest):
@@ -539,7 +544,7 @@ async def cancel_cascade(port: int):
 import json as _json
 import datetime
 
-_HISTORY_DIR = os.path.join(_DIR, "chat_history")
+_HISTORY_DIR = os.path.join(_PROJECT_ROOT, "data", "chat_history")
 os.makedirs(_HISTORY_DIR, exist_ok=True)
 
 
@@ -1450,65 +1455,75 @@ _process_cache = {
     "data": None
 }
 
-@app.get("/v1/system/processes")
-async def list_processes(name: str = None, main_only: bool = False, force_refresh: bool = False):
-    """列出进程，可按名称过滤。main_only=true 仅返回主进程（排除 Electron 子进程）"""
-    global _process_cache
+
+async def _refresh_process_cache():
+    """后台扫描全部进程和窗口，更新缓存（不阻塞请求）"""
     import psutil
     import ctypes
-    import time
     from ctypes import wintypes
-    
-    now = time.time()
-    
-    # 若缓存失效或强制刷新，则重新扫描全部进程与窗体
-    if force_refresh or not _process_cache["data"] or (now - _process_cache["timestamp"] >= 5.0):
-        user32 = ctypes.windll.user32
-        # 1. 收集系统中所有可见窗口与其 PID 的映射
-        pid_windows = {}
-        def _enum_cb(hwnd, _):
-            if user32.IsWindowVisible(hwnd):
-                pid = wintypes.DWORD()
-                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                if pid.value:
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length > 0:
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, buf, length + 1)
-                        title = buf.value
-                        if title:
-                            pid_windows.setdefault(pid.value, []).append({"hwnd": hwnd, "title": title})
-            return True
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
-        user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
 
-        # 2. 获取进程 (全量存入缓存)
-        procs_all = []
-        for p in psutil.process_iter(['pid', 'name', 'cmdline', 'memory_info']):
-            try:
-                info = p.info
-                pname = info.get('name', '')
-                cmd = ' '.join(info.get('cmdline') or [])
-                is_child = '--type=' in cmd
-                role = 'child' if is_child else 'main'
-                mem = info.get('memory_info')
-                
-                procs_all.append({
-                    "pid": info['pid'],
-                    "name": pname,
-                    "role": role,
-                    "cmd_line": cmd[:200],
-                    "memory_mb": round(mem.rss / (1024 * 1024), 1) if mem else 0,
-                    "windows": pid_windows.get(info['pid'], [])
-                })
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-                
-        procs_all.sort(key=lambda x: x['memory_mb'], reverse=True)
-        _process_cache["data"] = procs_all
-        _process_cache["timestamp"] = now
+    user32 = ctypes.windll.user32
+    pid_windows = {}
+    def _enum_cb(hwnd, _):
+        if user32.IsWindowVisible(hwnd):
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value:
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buf = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buf, length + 1)
+                    title = buf.value
+                    if title:
+                        pid_windows.setdefault(pid.value, []).append({"hwnd": hwnd, "title": title})
+        return True
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
 
-    # 3. 从缓存过滤返回
+    procs_all = []
+    for p in psutil.process_iter(['pid', 'name', 'cmdline', 'memory_info']):
+        try:
+            info = p.info
+            pname = info.get('name', '')
+            cmd = ' '.join(info.get('cmdline') or [])
+            is_child = '--type=' in cmd
+            role = 'child' if is_child else 'main'
+            mem = info.get('memory_info')
+            procs_all.append({
+                "pid": info['pid'],
+                "name": pname,
+                "role": role,
+                "cmd_line": cmd[:200],
+                "memory_mb": round(mem.rss / (1024 * 1024), 1) if mem else 0,
+                "windows": pid_windows.get(info['pid'], [])
+            })
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    procs_all.sort(key=lambda x: x['memory_mb'], reverse=True)
+    _process_cache["data"] = procs_all
+    _process_cache["timestamp"] = time.time()
+
+
+async def _process_cache_loop():
+    """每 30 秒后台自动刷新进程缓存"""
+    while True:
+        await asyncio.sleep(30)
+        try:
+            await _refresh_process_cache()
+        except Exception:
+            pass
+
+
+@app.get("/v1/system/processes")
+async def list_processes(name: str = None, main_only: bool = False, force_refresh: bool = False):
+    """列出进程。永远从缓存返回（后台自动刷新），force_refresh 触发立即刷新。"""
+    if force_refresh or not _process_cache["data"]:
+        await _refresh_process_cache()
+
+    if not _process_cache["data"]:
+        return {"processes": [], "count": 0}
+
     res = []
     for p in _process_cache["data"]:
         if name and name.lower() not in p['name'].lower():
@@ -1516,8 +1531,8 @@ async def list_processes(name: str = None, main_only: bool = False, force_refres
         if main_only and p['role'] == 'child':
             continue
         res.append(p)
-        
-    return {"processes": res[:100], "count": len(res)}
+
+    return {"processes": res[:100], "count": len(res), "cached_age": round(time.time() - _process_cache["timestamp"], 1)}
 
 
 @app.post("/v1/system/processes/{pid}/kill")

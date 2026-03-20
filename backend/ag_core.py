@@ -46,6 +46,7 @@ class ChatResult:
     steps_count: int = 0
     elapsed: float = 0.0
     error: str = ""
+    images: list = field(default_factory=list)
     raw_steps: list = field(default_factory=list)
 
 
@@ -253,7 +254,7 @@ class AntigravityCore:
 
     async def chat(self, message: str, conv_id: str = None,
                    timeout: float = 600.0,
-                   idle_timeout: float = 60.0,
+                   idle_timeout: float = 3600.0,
                    model: str = None) -> ChatResult:
         """
         完整对话流程:
@@ -264,7 +265,7 @@ class AntigravityCore:
         5. 返回 ChatResult
 
         超时策略:
-        - idle_timeout: steps 无变化的最大等待时间（默认 60s）
+        - idle_timeout: steps 无变化的最大等待时间（默认 3600s）
                         只要插件还在重试（steps 在变），就继续等
         - timeout:      绝对上限（默认 600s）
         """
@@ -299,6 +300,7 @@ class AntigravityCore:
                     steps_count=len(steps),
                     elapsed=time.time() - start,
                     error=error,
+                    images=p.extract_images(),
                     raw_steps=steps,
                 )
 

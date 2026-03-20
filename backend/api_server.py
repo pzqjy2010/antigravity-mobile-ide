@@ -100,7 +100,7 @@ class ChatRequest(BaseModel):
     message: str
     conv_id: Optional[str] = None
     timeout: float = 600.0
-    idle_timeout: float = 60.0
+    idle_timeout: float = 3600.0
     model: Optional[str] = None
     port: Optional[int] = None
 
@@ -147,6 +147,7 @@ async def chat(req: ChatRequest):
         "steps_count": result.steps_count,
         "elapsed": round(result.elapsed, 2),
         "error": result.error or None,
+        "images": result.images,
     }
 
 
@@ -224,6 +225,7 @@ async def _run_task(task_id: str, core: AntigravityCore,
             "steps_count": result.steps_count,
             "elapsed": round(result.elapsed, 2),
             "error": result.error or None,
+            "images": result.images,
         }
     except Exception as e:
         _tasks[task_id]["status"] = "failed"
@@ -525,18 +527,29 @@ async def workspace_file(path: str, port: int = None):
 
 # ─── Cancel / Stop Cascade ───────────────────────────────────
 
+class CancelRequest(BaseModel):
+    cascade_id: Optional[str] = None
+
 @app.post("/v1/instances/{port}/cancel")
-async def cancel_cascade(port: int):
-    """远程停止 AI 会话：依次尝试 CancelCascadeSteps 和 CancelCascadeInvocation"""
+async def cancel_cascade(port: int, req: CancelRequest = None):
+    """远程停止 AI 会话：调用 CancelCascadeInvocation（与 IDE 扩展行为一致）"""
     core = _get_core(port)
+    cascade_id = req.cascade_id if req else None
+    print(f"  🛑 Cancel request: port={port}, cascade_id={cascade_id}")
+    if not cascade_id:
+        print(f"  🛑 Cancel SKIPPED: no cascade_id provided")
+        return {"port": port, "cascade_id": None, "error": "no cascade_id provided"}
+    body = {"cascadeId": cascade_id}
     results = {}
-    for method in ["CancelCascadeSteps", "CancelCascadeInvocation"]:
+    for method in ["CancelCascadeInvocation", "CancelCascadeSteps"]:
         try:
-            resp = await core.rpc_call(method, {})
+            resp = await core.rpc_call(method, body)
+            print(f"  🛑 {method}: {resp}")
             results[method] = {"ok": True, "response": resp}
         except Exception as e:
+            print(f"  🛑 {method} ERROR: {e}")
             results[method] = {"ok": False, "error": str(e)}
-    return {"port": port, "results": results}
+    return {"port": port, "cascade_id": cascade_id, "results": results}
 
 
 # ─── Chat History Storage (跨设备一致性) ─────────────────────
@@ -558,6 +571,29 @@ class ChatHistorySaveRequest(BaseModel):
     cascade_id: str
     messages: list[dict]  # [{role, content, timestamp?, actions?}]
     port: Optional[int] = None
+
+
+from fastapi.responses import FileResponse
+import urllib.parse
+
+@app.get("/v1/chat/images")
+async def get_chat_image(uri: str):
+    """读取 AI 生成的本地图片
+    uri 格式通常为: file:///C:/Users/.../.gemini/antigravity/brain/.../xxx.png
+    """
+    if uri.startswith("file:///"):
+        path = uri[len("file:///"):]
+        # Windows 的路径，如 C:/Users/...
+        path = urllib.parse.unquote(path)
+        # 支持以 /C:/... 开头的情况
+        if path.startswith("/") and ":" in path:
+            path = path[1:]
+    else:
+        path = urllib.parse.unquote(uri)
+
+    if not os.path.exists(path):
+        return {"error": "Image not found"}
+    return FileResponse(path)
 
 
 @app.post("/v1/chat/history/{cascade_id}")

@@ -146,26 +146,33 @@ export async function openNewWorkspace() {
     } catch (e) { alert('错误: ' + e.message); }
 }
 
-export async function cancelCascade() {
+export async function cancelCascade(cascadeId) {
     if (!state.activePort) return;
     const btn = document.getElementById('cancelBtn');
     const resultDiv = document.getElementById('cancelResult');
-    btn.disabled = true;
-    btn.innerText = '⭐ 正在停止...';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = '⭐ 正在停止...';
+    }
     try {
-        const res = await fetch(`${BASE_URL}/v1/instances/${state.activePort}/cancel`, { method: 'POST' });
+        const res = await fetch(`${BASE_URL}/v1/instances/${state.activePort}/cancel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cascade_id: cascadeId || state.activeConvId || null })
+        });
         const data = await res.json();
         let msg = '';
         for (const [method, r] of Object.entries(data.results || {})) {
             msg += `${method}: ${r.ok ? '✅ 成功' : '❌ ' + r.error}\n`;
         }
-        resultDiv.innerText = msg;
-        btn.innerText = '✅ 已停止';
-        setTimeout(() => { btn.innerText = '🛑 紧急停止当前 AI 会话'; btn.disabled = false; }, 3000);
+        if (resultDiv) resultDiv.innerText = msg;
+        if (btn) {
+            btn.innerText = '✅ 已停止';
+            setTimeout(() => { btn.innerText = '🛑 紧急停止当前 AI 会话'; btn.disabled = false; }, 3000);
+        }
     } catch (e) {
-        resultDiv.innerText = '停止失败: ' + e.message;
-        btn.innerText = '🛑 紧急停止当前 AI 会话';
-        btn.disabled = false;
+        if (resultDiv) resultDiv.innerText = '停止失败: ' + e.message;
+        if (btn) { btn.innerText = '🛑 紧急停止当前 AI 会话'; btn.disabled = false; }
     }
 }
 

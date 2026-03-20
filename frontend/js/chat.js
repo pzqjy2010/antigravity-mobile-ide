@@ -149,10 +149,18 @@ async function loadTimeline(convId) {
 
 // --- 发送消息 ---
 let _chatBusy = false;
+let _chatAbortController = null;
 
 export async function sendMessage() {
     const inputStr = document.getElementById('chatInput');
-    if (_chatBusy) { cancelCascade(); return; }
+    if (_chatBusy) {
+        // 先通知 LS 停止 AI 执行器（必须在 abort 之前，否则 abort 导致后端轮询取消后 LS 认为执行器已不在运行）
+        await cancelCascade(state.activeConvId);
+        // 再中断前端的 fetch 请求
+        if (_chatAbortController) _chatAbortController.abort();
+        _setChatBusy(false);
+        return;
+    }
     const val = inputStr.value.trim();
     if (!val) return;
     inputStr.value = '';
@@ -161,6 +169,7 @@ export async function sendMessage() {
     appendMsg('user', val);
     const aiWrapper = appendMsg('ai', '<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>');
 
+    _chatAbortController = new AbortController();
     try {
         const res = await fetch(`${BASE_URL}/v1/chat`, {
             method: 'POST',
@@ -170,7 +179,8 @@ export async function sendMessage() {
                 conv_id: state.activeConvId,
                 port: state.activePort,
                 model: state.activeModel || undefined
-            })
+            }),
+            signal: _chatAbortController.signal
         });
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -183,9 +193,14 @@ export async function sendMessage() {
         renderAiResponse(aiWrapper, data);
         _archiveCurrentChat();
     } catch (e) {
-        console.error(e);
-        aiWrapper.querySelector('.bubble').innerHTML = `<span class="text-danger">❌ 请求失败: ${e.message}</span>`;
+        if (e.name === 'AbortError') {
+            aiWrapper.querySelector('.bubble').innerHTML = `<span class="text-warning">⏹️ 已手动停止</span>`;
+        } else {
+            console.error(e);
+            aiWrapper.querySelector('.bubble').innerHTML = `<span class="text-danger">❌ 请求失败: ${e.message}</span>`;
+        }
     }
+    _chatAbortController = null;
     _setChatBusy(false);
 }
 
@@ -234,6 +249,18 @@ function renderAiResponse(wrapper, data) {
 
     const replyHtml = (typeof marked !== 'undefined' && data.reply) ? marked.parse(data.reply) : (data.reply || '');
     let html = `<div>${replyHtml}</div>`;
+
+    if (data.images && data.images.length > 0) {
+        data.images.forEach(img => {
+            if (img.uri) {
+                const encodedUri = encodeURIComponent(img.uri);
+                html += `<div class="ai-generated-image-container" style="margin-top: 10px;">
+                            <img src="${BASE_URL}/v1/chat/images?uri=${encodedUri}" alt="${img.imageName}" title="${img.prompt}" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer;" />
+                            <div style="font-size: 0.85em; color: var(--text-color); opacity: 0.7; margin-top: 5px;">${img.prompt}</div>
+                         </div>`;
+            }
+        });
+    }
 
     if (data.actions && data.actions.length > 0) {
         const visibleActions = data.actions.filter(act => {

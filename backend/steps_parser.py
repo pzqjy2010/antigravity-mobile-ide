@@ -190,8 +190,24 @@ class StepsParser:
             elif "EPHEMERAL_MESSAGE" in step_type:
                 actions.append(StepAction(type="ephemeral_message", status=status))
 
+            elif "GENERATE_IMAGE" in step_type:
+                gi = step.get("generateImage", {})
+                media = gi.get("generatedMedia", {})
+                actions.append(StepAction(
+                    type="generate_image",
+                    status=status,
+                    content=gi.get("prompt", ""),
+                    detail={
+                        "imageName": gi.get("imageName", ""),
+                        "modelName": gi.get("modelName", ""),
+                        "mimeType": media.get("mimeType", ""),
+                        "uri": media.get("uri", ""),
+                        "inlineData": media.get("inlineData", ""),
+                    },
+                ))
+
             else:
-                # 未知类型 — 保留原始信息，Step 3 时补充
+                # 未知类型 — 保留原始信息
                 actions.append(StepAction(
                     type=short_type.lower(),
                     status=status,
@@ -218,6 +234,27 @@ class StepsParser:
             elif "TASK_BOUNDARY" in t:
                 milestones.append({"type": "task_boundary", "desc": "任务切换"})
         return milestones
+
+    def extract_images(self) -> list[dict]:
+        """提取所有生成的图片信息"""
+        images = []
+        for step in self.steps:
+            if "GENERATE_IMAGE" not in step.get("type", ""):
+                continue
+            gi = step.get("generateImage", {})
+            media = gi.get("generatedMedia", {})
+            uri = media.get("uri", "")
+            if not uri and not media.get("inlineData"):
+                continue
+            images.append({
+                "prompt": gi.get("prompt", ""),
+                "imageName": gi.get("imageName", ""),
+                "modelName": gi.get("modelName", ""),
+                "mimeType": media.get("mimeType", ""),
+                "uri": uri,
+                "inlineData": media.get("inlineData", ""),
+            })
+        return images
 
     def count_retries(self) -> int:
         """统计 503 重试次数"""

@@ -5,7 +5,7 @@ import { toggleInstanceDropdown, switchInstance, fetchInstances } from './instan
 import { initModelDropdown, selectModel } from './models.js';
 import { showScreenshot, focusSpecificWindow } from './screenshot.js';
 import { fetchFileTree } from './file-tree.js';
-import { execCommand } from './terminal.js';
+import { runTermCommand, createTerminal, switchTerminal, closeTerminal, clearTerminal, initTerminal } from './terminal.js';
 import { renderSettings, refreshInstances, openNewWorkspace, cancelCascade, toggleAutoScroll, focusWindow, fetchProcesses, killProcess } from './settings.js';
 import { initImageViewer } from './image-viewer.js';
 
@@ -20,7 +20,11 @@ window.focusSpecificWindow = focusSpecificWindow;
 window.closeDrawer = closeDrawer;
 window.closeModal = closeModal;
 window.fetchFileTree = fetchFileTree;
-window.execCommand = execCommand;
+window.runTermCommand = runTermCommand;
+window.createTerminal = createTerminal;
+window.switchTerminal = switchTerminal;
+window.closeTerminal = closeTerminal;
+window.clearTerminal = clearTerminal;
 window.renderSettings = renderSettings;
 window.refreshInstances = refreshInstances;
 window.openNewWorkspace = openNewWorkspace;

@@ -757,6 +757,186 @@ class ExecRequest(BaseModel):
     timeout: float = 30.0
 
 
+def _resolve_cwd(cwd: str = None, port: int = None) -> str:
+    """推断工作目录：显式指定 > workspace_path > 进程当前目录"""
+    if cwd:
+        return cwd
+    if port:
+        try:
+            return _get_core(port).workspace_path or os.getcwd()
+        except Exception:
+            pass
+    return os.getcwd()
+
+
+def _decode_output(data: bytes) -> str:
+    """Windows 安全解码：先试 UTF-8，再退回 GBK（cmd.exe 默认编码）"""
+    if not data:
+        return ""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return data.decode("gbk")
+        except UnicodeDecodeError:
+            return data.decode("utf-8", errors="replace")
+
+
+# ─── Multi-Terminal Management ────────────────────────────────
+
+class _TerminalSession:
+    """有状态终端会话：维护独立 cwd、环境变量、命令历史"""
+    def __init__(self, tid: str, name: str, cwd: str):
+        self.id = tid
+        self.name = name
+        self.cwd = cwd
+        self.env = os.environ.copy()
+        self.history: list[dict] = []
+        self.created_at = time.time()
+
+    def to_dict(self, include_history: bool = False) -> dict:
+        d = {
+            "id": self.id,
+            "name": self.name,
+            "cwd": self.cwd,
+            "history_count": len(self.history),
+            "created_at": self.created_at,
+        }
+        if include_history:
+            d["history"] = self.history[-200:]  # 最多返回最近 200 条
+        return d
+
+
+_terminals: dict[str, _TerminalSession] = {}
+
+
+class TerminalCreateRequest(BaseModel):
+    name: Optional[str] = None
+    cwd: Optional[str] = None
+    port: Optional[int] = None
+
+
+class TerminalExecRequest(BaseModel):
+    command: str
+    timeout: float = 30.0
+
+
+@app.post("/v1/terminals")
+async def terminal_create(req: TerminalCreateRequest):
+    """新建终端会话"""
+    cwd = _resolve_cwd(req.cwd, req.port)
+    tid = str(uuid.uuid4())[:8]
+    name = req.name or f"Terminal {len(_terminals) + 1}"
+    session = _TerminalSession(tid, name, cwd)
+    _terminals[tid] = session
+    return session.to_dict()
+
+
+@app.get("/v1/terminals")
+async def terminal_list():
+    """列出所有终端会话"""
+    return {
+        "terminals": [t.to_dict() for t in _terminals.values()],
+        "count": len(_terminals),
+    }
+
+
+@app.get("/v1/terminals/{tid}")
+async def terminal_get(tid: str, history: bool = False):
+    """获取终端详情（可选含历史）"""
+    if tid not in _terminals:
+        raise HTTPException(404, f"终端不存在: {tid}")
+    return _terminals[tid].to_dict(include_history=history)
+
+
+@app.post("/v1/terminals/{tid}/exec")
+async def terminal_exec(tid: str, req: TerminalExecRequest):
+    """在指定终端会话中执行命令（维护 cwd 状态）"""
+    if tid not in _terminals:
+        raise HTTPException(404, f"终端不存在: {tid}")
+    session = _terminals[tid]
+
+    # 在 Windows 上追加 cd 命令来追踪目录变化
+    # 用 && 串联：执行用户命令后打印新 cwd
+    track_cmd = f'{req.command} && cd'
+
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            track_cmd, cwd=session.cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=session.env,
+        )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=req.timeout
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            entry = {"command": req.command, "exit_code": -1,
+                     "stdout": "", "stderr": f"命令超时 ({req.timeout}s)",
+                     "cwd": session.cwd, "ts": time.time()}
+            session.history.append(entry)
+            return entry
+
+        stdout = _decode_output(stdout_bytes)
+        stderr = _decode_output(stderr_bytes)
+
+        # 从 stdout 尾部提取新 cwd（cd 命令的输出）
+        if proc.returncode == 0 and stdout.strip():
+            lines = stdout.rstrip().split('\n')
+            potential_cwd = lines[-1].strip()
+            if os.path.isdir(potential_cwd):
+                session.cwd = potential_cwd
+                stdout = '\n'.join(lines[:-1])  # 去掉 cd 输出那行
+                if stdout and not stdout.endswith('\n'):
+                    stdout += '\n'
+                if not stdout.strip():
+                    stdout = ""
+
+        max_out = 50_000
+        entry = {
+            "command": req.command,
+            "exit_code": proc.returncode,
+            "stdout": stdout[:max_out],
+            "stderr": stderr[:max_out],
+            "cwd": session.cwd,
+            "ts": time.time(),
+            "truncated": len(stdout) > max_out or len(stderr) > max_out,
+        }
+        session.history.append(entry)
+        return entry
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.put("/v1/terminals/{tid}")
+async def terminal_rename(tid: str, name: str):
+    """重命名终端"""
+    if tid not in _terminals:
+        raise HTTPException(404, f"终端不存在: {tid}")
+    _terminals[tid].name = name
+    return _terminals[tid].to_dict()
+
+
+@app.delete("/v1/terminals/{tid}")
+async def terminal_delete(tid: str):
+    """关闭并删除终端会话"""
+    if tid not in _terminals:
+        raise HTTPException(404, f"终端不存在: {tid}")
+    session = _terminals.pop(tid)
+    return {"ok": True, "id": tid, "name": session.name}
+
+
+@app.post("/v1/terminals/{tid}/clear")
+async def terminal_clear(tid: str):
+    """清空终端历史"""
+    if tid not in _terminals:
+        raise HTTPException(404, f"终端不存在: {tid}")
+    _terminals[tid].history.clear()
+    return {"ok": True, "id": tid}
+
+
 @app.get("/v1/system/screenshot")
 async def system_screenshot(title: str = None, mode: str = "window", quality: int = 60):
     """
@@ -933,38 +1113,33 @@ async def system_open_workspace(path: str):
 
 @app.post("/v1/system/exec")
 async def system_exec(req: ExecRequest):
-    """在工作区目录下执行命令，返回 stdout/stderr"""
-    # 确定工作目录
-    cwd = req.cwd
-    if not cwd and req.port:
-        try:
-            core = _get_core(req.port)
-            cwd = core.workspace_path
-        except Exception:
-            pass
-    if not cwd:
-        cwd = os.getcwd()
-
+    """在工作区目录下执行命令，返回 stdout/stderr（异步 + Windows 编码安全）"""
+    cwd = _resolve_cwd(req.cwd, req.port)
     try:
-        result = subprocess.run(
-            req.command, shell=True, cwd=cwd,
-            capture_output=True, text=True,
-            timeout=req.timeout,
+        proc = await asyncio.create_subprocess_shell(
+            req.command, cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        # 截断过长输出
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=req.timeout
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            return {"exit_code": -1, "stdout": "", "stderr": f"命令超时 ({req.timeout}s)",
+                    "cwd": cwd, "truncated": False}
+
+        stdout = _decode_output(stdout_bytes)
+        stderr = _decode_output(stderr_bytes)
         max_out = 50_000
-        stdout = result.stdout[:max_out]
-        stderr = result.stderr[:max_out]
         return {
-            "exit_code": result.returncode,
-            "stdout": stdout,
-            "stderr": stderr,
+            "exit_code": proc.returncode,
+            "stdout": stdout[:max_out],
+            "stderr": stderr[:max_out],
             "cwd": cwd,
-            "truncated": len(result.stdout) > max_out or len(result.stderr) > max_out,
+            "truncated": len(stdout) > max_out or len(stderr) > max_out,
         }
-    except subprocess.TimeoutExpired:
-        return {"exit_code": -1, "stdout": "", "stderr": f"命令超时 ({req.timeout}s)",
-                "cwd": cwd, "truncated": False}
     except Exception as e:
         raise HTTPException(500, str(e))
 

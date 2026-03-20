@@ -80,21 +80,25 @@
     </div>
     <div id="drawer-term" class="drawer">
         <div class="drawer-header">
-            <span>>_ 远程终端</span>
-            <button class="close-btn" onclick="closeDrawer('term')">✕</button>
+            <span>>_ 终端</span>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button class="close-btn" onclick="clearTerminal()" title="清屏">清屏</button>
+                <button class="close-btn" onclick="closeDrawer('term')">✕</button>
+            </div>
         </div>
-        <div class="drawer-content" style="display:flex; flex-direction:column;">
-            <div id="termCwd"
-                style="font-size:11px; color:var(--text-muted); margin-bottom:8px; font-family:'JetBrains Mono',monospace;">
-            </div>
-            <div class="term-output" id="termOutput">欢迎使用远程终端 🖥️
-                输入命令并回车执行
-            </div>
+        <div class="drawer-content" style="display:flex; flex-direction:column; padding-top:0;">
+            <!-- 终端标签栏 -->
+            <div class="term-tab-bar" id="termTabs"></div>
+            <!-- cwd 显示 -->
+            <div id="termCwd" class="term-cwd"></div>
+            <!-- 输出区 -->
+            <div class="term-output" id="termOutput">点击 ＋ 新建一个终端会话</div>
+            <!-- 输入栏 -->
             <div class="term-input-bar">
                 <span style="color:#4ade80; font-weight:bold;">$</span>
                 <input type="text" id="termInput" placeholder="输入命令..."
-                    onkeypress="if(event.key==='Enter') execCommand()">
-                <button onclick="execCommand()">执行</button>
+                    onkeypress="if(event.key==='Enter') runTermCommand()">
+                <button id="termExecBtn" onclick="runTermCommand()">执行</button>
             </div>
         </div>
     </div>

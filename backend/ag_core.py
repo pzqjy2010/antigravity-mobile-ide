@@ -22,9 +22,12 @@ warnings.filterwarnings("ignore")
 import httpx
 
 # 添加父目录到 path，以便 import ls_connector
-_PARENT = os.path.join(os.path.dirname(__file__), "..")
-if _PARENT not in sys.path:
-    sys.path.insert(0, _PARENT)
+_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.normpath(os.path.join(_DIR, ".."))     # my_antigravity_assitent/
+_TOOL_ROOT = os.path.normpath(os.path.join(_PROJECT_ROOT, ".."))  # antigravity_zero_tool/
+for p in [_PROJECT_ROOT, _TOOL_ROOT, _DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 from ls_connector import discover_ls_instances, get_oauth_token
 from steps_parser import StepsParser

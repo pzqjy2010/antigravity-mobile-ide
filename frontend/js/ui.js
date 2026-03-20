@@ -2,6 +2,7 @@
 import { fetchFileTree } from './file-tree.js';
 import { renderSettings } from './settings.js';
 import { showScreenshot } from './screenshot.js';
+import { initTerminal } from './terminal.js';
 
 export const chatContainer = document.getElementById('chatContainer');
 export const inputEl = document.getElementById('chatInput');
@@ -13,6 +14,7 @@ export function toggleDrawer(name) {
         target.classList.add('open');
         // 懒加载
         if (name === 'file') fetchFileTree();
+        if (name === 'term') initTerminal();
         if (name === 'settings') renderSettings();
     }
 }

@@ -789,15 +789,77 @@ details.action-tree-container[open] summary .dropdown-arrow {
 }
 
 /* Terminal */
+.term-tab-bar {
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+    padding: 8px 0 6px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.term-tab-bar::-webkit-scrollbar { display: none; }
+
+.term-tab {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid transparent;
+    border-radius: 6px 6px 0 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: all 0.15s;
+}
+.term-tab:hover { background: rgba(255,255,255,0.1); }
+.term-tab.active {
+    background: #000;
+    color: #4ade80;
+    border-color: var(--panel-border);
+    border-bottom-color: #000;
+}
+.term-tab-close {
+    font-size: 14px;
+    line-height: 1;
+    opacity: 0.4;
+    cursor: pointer;
+}
+.term-tab-close:hover { opacity: 1; color: var(--danger); }
+.term-tab-add {
+    color: var(--text-muted);
+    font-size: 14px;
+    border: 1px dashed rgba(255,255,255,0.15);
+    background: transparent;
+}
+.term-tab-add:hover { color: #4ade80; border-color: #4ade80; }
+
+.term-cwd {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 4px 12px;
+    font-family: 'JetBrains Mono', monospace;
+    background: rgba(0,0,0,0.3);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .term-output {
     font-family: 'JetBrains Mono', monospace;
     font-size: 12px;
     background: #000;
     color: #4ade80;
     padding: 12px;
-    border-radius: 8px;
+    border-radius: 0 0 8px 8px;
+    flex: 1;
     min-height: 200px;
-    max-height: calc(100vh - 300px);
+    max-height: calc(100vh - 340px);
     overflow-y: auto;
     white-space: pre-wrap;
     word-break: break-all;
@@ -807,7 +869,7 @@ details.action-tree-container[open] summary .dropdown-arrow {
 .term-input-bar {
     display: flex;
     gap: 8px;
-    margin-top: 12px;
+    margin-top: 8px;
     align-items: center;
 }
 
@@ -832,6 +894,11 @@ details.action-tree-container[open] summary .dropdown-arrow {
     cursor: pointer;
     font-weight: 600;
     font-size: 13px;
+    min-width: 52px;
+}
+.term-input-bar button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .term-input-bar button:active {

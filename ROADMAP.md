@@ -27,9 +27,19 @@
 - [ ] `connector_config.py` 骨架实现
 - [ ] `ag_core.py` → `connector_ag.py` + .gitignore
 - [ ] AI Agent 指引文档
+- [ ] 适配更多 AI 编程工具（Cursor、Windsurf、Copilot 等）
 
 ### 功能增强
 
 - [ ] AI 图片生成显示（确认 AG 返回格式后实现）
 - [ ] 文件编辑器（代码高亮 + 保存）
 - [ ] 会话管理（创建/切换/删除）
+
+### AI 工具化
+
+- [ ] 将本项目整理为 Skill 或 MCP Server，供 AI Agent 直接调用
+
+### 原生客户端
+
+- [ ] Android 原生客户端实现
+- [ ] iOS 原生客户端实现

@@ -1,5 +1,15 @@
 # Antigravity Mobile IDE
 
+> **⚠️ 免责声明 / Disclaimer**
+>
+> 本项目仅供**学习和研究**目的。使用本工具与 Antigravity IDE 交互可能违反 Google 的服务条款（Terms of Service），并可能导致账号暂停或终止。**使用风险完全由用户自行承担。**
+>
+> 项目维护者不对因使用本工具而导致的任何后果（包括但不限于账号封禁、数据丢失、服务中断）承担任何责任。
+>
+> This project is for **educational and research purposes only**. Using this tool to interact with Antigravity IDE may violate Google's Terms of Service and could result in account suspension or termination. **Use at your own risk.**
+>
+> Licensed under [CC BY-NC-SA 4.0](LICENSE) — 非商业用途，署名，相同方式共享。
+
 Python 后端 + 模块化前端，封装 Antigravity Language Server 的对话能力，提供 REST API + Mobile Web IDE。
 
 ## 项目结构

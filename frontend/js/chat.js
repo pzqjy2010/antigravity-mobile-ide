@@ -100,6 +100,7 @@ export async function loadChatHistory(convId) {
                     bubble.textContent = m.content || '';
                 } else {
                     bubble.innerHTML = m.content || '';
+                    _bindImageClickEvents(bubble);
                 }
             });
             return;
@@ -281,5 +282,21 @@ function renderAiResponse(wrapper, data) {
     }
 
     bubble.innerHTML = html;
+    _bindImageClickEvents(bubble);
     chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+/** 给容器内所有 img 绑定点击 → 全屏查看 */
+function _bindImageClickEvents(container) {
+    container.querySelectorAll('img').forEach(img => {
+        img.classList.add('chat-img');
+        img.style.cursor = 'pointer';
+        img.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof openImageViewer === 'function') {
+                openImageViewer(img.src);
+            }
+        });
+    });
 }

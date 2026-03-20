@@ -1349,3 +1349,19 @@ details.action-tree-container[open] summary .dropdown-arrow {
     border-top: 1px solid rgba(255, 255, 255, 0.06);
     margin-top: 4px;
 }
+
+/* Chat Images */
+.chat-img {
+    max-width: 100%;
+    border-radius: 8px;
+    margin: 8px 0;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    display: block;
+}
+.chat-img:hover {
+    opacity: 0.85;
+}
+.chat-img:active {
+    opacity: 0.7;
+}

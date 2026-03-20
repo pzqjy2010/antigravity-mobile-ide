@@ -33,7 +33,7 @@ export function initImageViewer() {
     }
 
     window.openImageViewer = function (src) {
-        if (!src || !src.startsWith('data:image')) return;
+        if (!src) return;
         overlay.classList.add('active');
         viewImg.onload = function () {
             imgW = viewImg.naturalWidth;

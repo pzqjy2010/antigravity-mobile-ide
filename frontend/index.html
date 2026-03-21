@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Antigravity Mobile IDE</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=8">
 </head>
 
 <body>
@@ -136,7 +136,14 @@
         <div id="imgViewerInfo"></div>
     </div>
 
-    <script type="module" src="js/app.js?v=2"></script>
+    <!-- Context Menu -->
+    <div id="fileContextMenu" class="context-menu" style="display:none;">
+        <div class="menu-item" id="menuRefreshDir" style="display:none;">🔄 刷新文件夹</div>
+        <div class="menu-item" id="menuCopyPath">📄 复制路径</div>
+        <div class="menu-item" id="menuMentionFile">💬 @ 引用到聊天</div>
+    </div>
+
+    <script type="module" src="js/app.js?v=10"></script>
 </body>
 
 </html>

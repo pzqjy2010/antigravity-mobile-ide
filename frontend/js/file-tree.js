@@ -2,6 +2,7 @@
 import { state, BASE_URL } from './state.js';
 
 export async function fetchFileTree() {
+    initContextMenu();
     if (!state.activePort) return;
     const container = document.getElementById('fileTreeContainer');
     container.innerHTML = '<div style="color:var(--text-muted)">加载中...</div>';
@@ -23,12 +24,25 @@ function renderTree(parent, items) {
             const div = document.createElement('div');
             div.className = 'tree-dir';
             // 默认合并子目录 (collapsed)
-            div.innerHTML = `<div class="tree-item"><span class="tree-toggle">▶</span> 📁 ${item.name}</div>
+            div.innerHTML = `<div class="tree-item">
+                                <span class="tree-toggle">▶</span>
+                                <span style="flex:1;">📁 ${item.name}</span>
+                                <div class="tree-context-btn" style="width:44px; height:44px; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:20px; color:var(--text-muted); cursor:pointer; margin-right:-10px;">⋮</div>
+                             </div>
                              <div class="tree-children collapsed"></div>`;
             const toggle = div.querySelector('.tree-item');
             const children = div.querySelector('.tree-children');
             const toggleIcon = div.querySelector('.tree-toggle');
+            const contextBtn = div.querySelector('.tree-context-btn');
             
+            if (contextBtn) {
+                contextBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    showContextMenu(e, item, div);
+                });
+            }
+
             toggle.addEventListener('click', async () => {
                 const isClosed = children.classList.contains('collapsed');
                 if (isClosed) {
@@ -63,11 +77,123 @@ function renderTree(parent, items) {
             const div = document.createElement('div');
             div.className = 'tree-item';
             const sizeKB = item.size > 1024 ? `${(item.size / 1024).toFixed(1)}KB` : `${item.size}B`;
-            div.innerHTML = `<span style="width:14px;"></span> 📄 <span style="flex:1;">${item.name}</span> <span style="font-size:10px; opacity:0.3;">${sizeKB}</span>`;
-            div.addEventListener('click', () => openFile(item.path, item.name));
+            div.innerHTML = `<span style="width:14px;"></span> 📄 <span style="flex:1;">${item.name}</span> 
+                             <span style="font-size:10px; opacity:0.3; margin-right:4px;">${sizeKB}</span>
+                             <div class="tree-context-btn" style="width:44px; height:44px; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:20px; color:var(--text-muted); cursor:pointer; margin-right:-10px;">⋮</div>`;
+            
+            const contextBtn = div.querySelector('.tree-context-btn');
+            if (contextBtn) {
+                contextBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    showContextMenu(e, item, div);
+                });
+            }
+
+            div.addEventListener('click', () => {
+                openFile(item.path, item.name);
+            });
             parent.appendChild(div);
         }
     });
+}
+
+// --- Context Menu Logic ---
+let isContextBound = false;
+let currentContextItem = null;
+
+function initContextMenu() {
+    if (isContextBound) return;
+    isContextBound = true;
+    
+    const hideContextMenu = () => {
+        const m = document.getElementById('fileContextMenu');
+        if (m) m.style.display = 'none';
+    };
+
+    document.addEventListener('click', hideContextMenu);
+    document.addEventListener('touchstart', (e) => {
+        const m = document.getElementById('fileContextMenu');
+        if (m && m.style.display !== 'none' && !e.target.closest('#fileContextMenu')) {
+            hideContextMenu();
+        }
+    });
+
+    const copyBtn = document.getElementById('menuCopyPath');
+    const mentionBtn = document.getElementById('menuMentionFile');
+    const refreshBtn = document.getElementById('menuRefreshDir');
+    
+    if (copyBtn) copyBtn.onclick = async () => {
+        if (!currentContextItem) return;
+        try {
+            await navigator.clipboard.writeText(currentContextItem.item.path);
+            import('./ui.js').then(m => m.showToast('已复制路径'));
+        } catch(e) {}
+        hideContextMenu();
+    };
+    
+    if (mentionBtn) mentionBtn.onclick = () => {
+        if (!currentContextItem) return;
+        const input = document.getElementById('chatInput');
+        if (input) {
+            input.value += (input.value ? ' ' : '') + '@file:' + currentContextItem.item.path + ' ';
+            input.focus();
+        }
+        import('./ui.js').then(m => m.closeDrawer('file'));
+        hideContextMenu();
+    };
+    
+    if (refreshBtn) refreshBtn.onclick = () => {
+        if (!currentContextItem || currentContextItem.item.type !== 'dir') return;
+        const item = currentContextItem.item;
+        item.children = null; // 清除缓存
+        const div = currentContextItem.div;
+        
+        const childrenDiv = div.querySelector('.tree-children');
+        const toggleIcon = div.querySelector('.tree-toggle');
+        const treeItemBtn = div.querySelector('.tree-item');
+        
+        if (!childrenDiv.classList.contains('collapsed')) {
+             childrenDiv.classList.add('collapsed');
+             toggleIcon.classList.remove('open');
+        }
+        treeItemBtn.click();
+        hideContextMenu();
+    };
+}
+
+function showContextMenu(e, itemData, parentDiv) {
+    if (navigator.vibrate) {
+        try { navigator.vibrate(50); } catch(ex){}
+    }
+    currentContextItem = { item: itemData, div: parentDiv };
+    const m = document.getElementById('fileContextMenu');
+    if (!m) return;
+    
+    const refreshBtn = document.getElementById('menuRefreshDir');
+    if (refreshBtn) refreshBtn.style.display = itemData.type === 'dir' ? 'flex' : 'none';
+    
+    let x = e.clientX;
+    let y = e.clientY;
+    
+    // Fallback if clientX is undefined on specific touch clicks
+    if (x === undefined || y === undefined || (x === 0 && y === 0)) {
+        if (e.target && e.target.getBoundingClientRect) {
+            const rect = e.target.getBoundingClientRect();
+            x = rect.left - 100; // offset slightly to the left
+            y = rect.bottom;
+        } else {
+            x = window.innerWidth / 2;
+            y = window.innerHeight / 2;
+        }
+    }
+    
+    m.style.display = 'block';
+    if (x + m.offsetWidth > window.innerWidth) x = window.innerWidth - m.offsetWidth - 10;
+    if (y + m.offsetHeight > window.innerHeight) y = window.innerHeight - m.offsetHeight - 10;
+    
+    m.style.left = `${x}px`;
+    m.style.top = `${y}px`;
 }
 
 export async function openFile(path, name) {

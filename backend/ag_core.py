@@ -304,6 +304,8 @@ class AntigravityCore:
                     raw_steps=steps,
                 )
 
+            done_grace_time = None  # PLANNER_RESPONSE DONE 后的等待窗口
+
             while True:
                 now = time.time()
                 elapsed = now - start
@@ -314,6 +316,10 @@ class AntigravityCore:
 
                 if idle_elapsed > idle_timeout and last_steps:
                     return _build(last_steps, "idle_timeout")
+
+                # PLANNER_RESPONSE DONE 后等了 5 秒仍无新 steps → 视为完成
+                if done_grace_time and (now - done_grace_time > 5.0):
+                    return _build(last_steps)
 
                 await asyncio.sleep(random.uniform(0.15, 0.25))
 
@@ -327,6 +333,7 @@ class AntigravityCore:
                 if len(all_steps) != last_step_count:
                     last_step_count = len(all_steps)
                     last_change_time = time.time()
+                    done_grace_time = None  # 有新 step，重置等待
 
                 last_steps = new_steps
                 parser = StepsParser(new_steps)
@@ -334,9 +341,14 @@ class AntigravityCore:
                 # ── 完成检测 ──
                 last_type = new_steps[-1].get("type", "")
 
-                # CHECKPOINT → cascade 真正结束（唯一可靠的结束信号）
+                # CHECKPOINT → cascade 真正结束
                 if "CHECKPOINT" in last_type:
                     return _build(new_steps)
+
+                # PLANNER_RESPONSE DONE → 启动等待窗口（可能还有后续工具调用）
+                if parser.is_response_done() and parser.extract_response_text():
+                    if not done_grace_time:
+                        done_grace_time = time.time()
 
     async def get_status(self, conv_id: str) -> dict:
         """获取会话当前状态快照"""

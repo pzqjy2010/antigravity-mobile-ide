@@ -52,13 +52,34 @@ export async function openFile(path, name) {
         const data = await res.json();
         if (data.error) throw new Error(data.detail || data.error);
         const lines = data.content.split('\n');
-        let html = '<div class="code-viewer"><pre>';
-        lines.forEach((line, i) => {
+        const MAX_LINES = 3000;
+        let isTruncated = false;
+        if (lines.length > MAX_LINES) {
+            lines.length = MAX_LINES;
+            isTruncated = true;
+        }
+
+        const styleHtml = `<style>
+            .code-line-tr { display: block; position: relative; min-height: 1.2em; white-space: pre; }
+            .code-line-tr::before {
+                counter-increment: line; content: counter(line);
+                position: absolute; left: -3.5em; width: 3em; text-align: right;
+                color: rgba(255,255,255,0.3); user-select: none; font-size: 0.9em;
+            }
+        </style>`;
+
+        let html = '<div class="code-viewer"><pre style="counter-reset: line; padding-left: 3.5em; overflow-x: auto;">';
+        lines.forEach((line) => {
             const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            html += `<div class="code-line"> <span class="code-line-num">${i + 1}</span><span>${escaped}</span></div>`;
+            html += `<span class="code-line-tr">${escaped}</span>`;
         });
         html += '</pre></div>';
-        document.getElementById('modalContent').innerHTML = html;
+
+        if (isTruncated) {
+            html = `<div style="background:rgba(245,158,11,0.2); color:#fcd34d; padding:8px 16px; margin: 10px; border-radius:4px; font-size:13px; text-align:center;">⚠️ 文件过大，为保证流畅度已截断显示前 ${MAX_LINES} 行</div>` + html;
+        }
+        
+        document.getElementById('modalContent').innerHTML = styleHtml + html;
     } catch (e) {
         document.getElementById('modalContent').innerHTML = `<div style="color:var(--danger); padding:20px;">无法打开: ${e.message}</div>`;
     }

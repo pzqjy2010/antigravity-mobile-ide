@@ -41,7 +41,7 @@ export async function focusSpecificWindow(hwnd, btnNode) {
 }
 
 function _openScreenModal() {
-    const modal = document.getElementById('modal-viewer');
+    const modal = document.getElementById('modal-screen');
     if (modal.classList.contains('open')) return false; // 已打开
     modal.classList.add('open');
     modal.innerHTML = `
@@ -80,7 +80,7 @@ export async function showScreenshot(modeOverride = null) {
 
     if (modeOverride) _currentScreenMode = modeOverride;
 
-    const modal = document.getElementById('modal-viewer');
+    const modal = document.getElementById('modal-screen');
     const wasAlreadyOpen = modal.classList.contains('open');
     const isFirstOpen = _openScreenModal(); // 立刻打开 modal（如果还没开）
 

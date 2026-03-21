@@ -26,8 +26,12 @@ export function closeDrawer(name) {
 }
 
 export function closeModal() {
-    document.getElementById('modal-viewer').classList.remove('open');
-    document.getElementById('modalActions').innerHTML = '';
+    const viewer = document.getElementById('modal-viewer');
+    if (viewer) viewer.classList.remove('open');
+    const screen = document.getElementById('modal-screen');
+    if (screen) screen.classList.remove('open');
+    const actions = document.getElementById('modalActions');
+    if (actions) actions.innerHTML = '';
 }
 
 export function appendMsg(role, text) {

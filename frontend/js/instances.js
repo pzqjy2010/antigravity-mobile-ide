@@ -59,7 +59,13 @@ export async function fetchInstances() {
             let target = state.instances[0];
             if (saved.port) {
                 const savedInst = state.instances.find(i => i.port === saved.port);
-                if (savedInst) target = savedInst;
+                if (savedInst) {
+                    target = savedInst;
+                } else {
+                    // 旧端口已失效（IDE 重启），自动切换到第一个可用实例
+                    console.warn(`旧端口 ${saved.port} 已失效，自动切换到 ${target.port}`);
+                    state.activeConvId = null; // 清除旧会话
+                }
             } else {
                 const target5490 = state.instances.find(i => i.port === 5490);
                 if (target5490) target = target5490;
@@ -85,6 +91,8 @@ export async function fetchInstances() {
             }
         } else {
             document.getElementById('instanceName').innerText = "无工作区";
+            document.getElementById('modelName').innerText = "—";
+            document.getElementById('sessionLabel').innerText = "无会话";
             resetChatArea();
         }
     } catch (e) {

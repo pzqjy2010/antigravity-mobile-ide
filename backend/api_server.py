@@ -87,11 +87,15 @@ def _force_foreground(user32, hwnd):
         user32.ShowWindow(hwnd, 5) # SW_SHOW
 
 def _get_core(port: int = None) -> AntigravityCore:
-
     p = port or _default_port
     if p not in _cores:
         _cores[p] = AntigravityCore(port=p if p else None)
     return _cores[p]
+
+def _invalidate_core(port: int):
+    """连接失败时清除旧的 core 缓存，下次请求会重建"""
+    _cores.pop(port, None)
+    _conv_cache.pop(port, None)
 
 
 # ─── Request/Response Models ─────────────────────────────────
@@ -777,7 +781,13 @@ async def ls_user_status(port: int = None):
     if _user_status_cache["data"] and _user_status_cache["port"] == port and (now - _user_status_cache["timestamp"] < 30):
         return _user_status_cache["data"]
     core = _get_core(port)
-    data = await core.rpc_call("GetUserStatus")
+    try:
+        data = await core.rpc_call("GetUserStatus")
+    except Exception as e:
+        if "ConnectError" in type(e).__name__ or "ConnectError" in str(e):
+            _invalidate_core(port or _default_port)
+            raise HTTPException(503, detail={"error": "ls_disconnected", "message": "LS 连接失败，请刷新实例"})
+        raise
     _user_status_cache = {"timestamp": now, "port": port, "data": data}
     return data
 
@@ -793,7 +803,13 @@ async def ls_models(port: int = None):
     if _models_cache["data"] and _models_cache["port"] == port and (now - _models_cache["timestamp"] < 3600):
         return _models_cache["data"]
     core = _get_core(port)
-    data = await core.rpc_call("GetCascadeModelConfigData")
+    try:
+        data = await core.rpc_call("GetCascadeModelConfigData")
+    except Exception as e:
+        if "ConnectError" in type(e).__name__ or "ConnectError" in str(e):
+            _invalidate_core(port or _default_port)
+            raise HTTPException(503, detail={"error": "ls_disconnected", "message": "LS 连接失败，请刷新实例"})
+        raise
     _models_cache = {"timestamp": now, "port": port, "data": data}
     return data
 
@@ -1280,9 +1296,16 @@ def _enum_windows(title_filter: str = None, process_filter: str = None) -> list:
     return results
 
 
+_system_info_cache = {"timestamp": 0, "data": None}
+
 @app.get("/v1/system/info")
 async def system_info():
-    """获取系统硬件和运行状态信息"""
+    """获取系统硬件和运行状态信息（10秒本地缓存）"""
+    global _system_info_cache
+    now = time.time()
+    if _system_info_cache["data"] and (now - _system_info_cache["timestamp"] < 10):
+        return _system_info_cache["data"]
+
     try:
         import psutil
         import socket
@@ -1315,7 +1338,7 @@ async def system_info():
             w = h = 0
             monitors = [{"bbox": [0, 0, 0, 0]}]
 
-        return {
+        data = {
             "hostname": socket.gethostname(),
             "platform": platform.platform(),
             "cpu": {
@@ -1334,15 +1357,29 @@ async def system_info():
                 "count": len(monitors)
             }
         }
+        _system_info_cache = {"timestamp": now, "data": data}
+        return data
     except Exception as e:
         raise HTTPException(500, f"无法获取系统信息: {str(e)}")
 
 
+_windows_cache = {"timestamp": 0, "title": None, "process": None, "data": None}
+
 @app.get("/v1/system/windows")
 async def list_windows(title: str = None, process: str = None):
-    """列出可见窗口。title=标题关键词, process=进程名关键词"""
+    """列出可见窗口。title=标题关键词, process=进程名关键词（3秒本地缓存）"""
+    global _windows_cache
+    now = time.time()
+    if (_windows_cache["data"] and 
+        _windows_cache["title"] == title and 
+        _windows_cache["process"] == process and 
+        (now - _windows_cache["timestamp"] < 3)):
+        return _windows_cache["data"]
+
     windows = _enum_windows(title, process)
-    return {"windows": windows, "count": len(windows)}
+    data = {"windows": windows, "count": len(windows)}
+    _windows_cache = {"timestamp": now, "title": title, "process": process, "data": data}
+    return data
 
 
 @app.get("/v1/system/windows/{hwnd}")

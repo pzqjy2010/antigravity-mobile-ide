@@ -1,8 +1,9 @@
 // --- 截图查看器 ---
-import { state, BASE_URL } from './state.js';
+import { state, BASE_URL, cacheGet, cacheSet } from './state.js';
 
 let _currentScreenMode = 'full';
 let _monitorCountCache = 0;
+let _screenshotLoading = false; // 防抖锁：加载中不允许重复触发
 
 function _renderSegments() {
     const seg = document.getElementById('screenSegments');
@@ -39,13 +40,52 @@ export async function focusSpecificWindow(hwnd, btnNode) {
     }
 }
 
+function _openScreenModal() {
+    const modal = document.getElementById('modal-viewer');
+    if (modal.classList.contains('open')) return false; // 已打开
+    modal.classList.add('open');
+    modal.innerHTML = `
+        <div class="screen-area">
+            <div class="glass-pill screen-close-pill" onclick="closeModal()">✕</div>
+            <div class="screen-img-box" id="screenImgBox">
+                <div id="screenSpinner" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); display:flex; flex-direction:column; align-items:center; gap:12px; color:rgba(255,255,255,0.7); font-size:14px; pointer-events:none;">
+                    <div class="viewer-spinner"></div>
+                    <div>正在获取屏幕截图...</div>
+                </div>
+                <img id="screenImg" class="screen-img" onclick="openImageViewer(this.src)" style="display:none;" />
+            </div>
+            <div class="screen-controls">
+                <div class="glass-pill screen-segments" id="screenSegments"></div>
+                <button class="glass-pill segment-btn screen-refresh-btn" onclick="showScreenshot()">🔄</button>
+            </div>
+        </div>
+        <div class="dash-panel">
+            <div class="dash-stats" id="dashStats">
+                <div class="stat-card text-dimmed">CPU: 加载中...</div>
+                <div class="stat-card text-dimmed">MEM: 加载中...</div>
+            </div>
+            <h4 class="section-heading">活跃窗口大纲 (Active Windows)</h4>
+            <div class="window-list" id="dashWindows">
+                <div class="text-dimmed text-sm" style="padding:12px;">正在获取桌面可视窗口指纹...</div>
+            </div>
+        </div>
+    `;
+    return true; // 首次打开
+}
+
 export async function showScreenshot(modeOverride = null) {
+    // 防抖：加载中不允许重复触发
+    if (_screenshotLoading) return;
+    _screenshotLoading = true;
+
     if (modeOverride) _currentScreenMode = modeOverride;
 
     const modal = document.getElementById('modal-viewer');
-    const isFirstOpen = !modal.classList.contains('open');
+    const wasAlreadyOpen = modal.classList.contains('open');
+    const isFirstOpen = _openScreenModal(); // 立刻打开 modal（如果还没开）
 
     if (isFirstOpen && !modeOverride) {
+        // 首次打开：后台查询窗口状态以自动选择模式
         try {
             const res = await fetch(`${BASE_URL}/v1/system/windows?title=Antigravity&process=Antigravity.exe`);
             const data = await res.json();
@@ -57,41 +97,15 @@ export async function showScreenshot(modeOverride = null) {
                 _currentScreenMode = activeWin.is_maximized ? 'full' : 'window';
             }
         } catch (e) { /* 查询失败保持默认 full */ }
-    }
-
-    const isWindow = _currentScreenMode === 'window';
-    const isFull = _currentScreenMode === 'full';
-
-    if (isFirstOpen) {
-        modal.classList.add('open');
-        modal.innerHTML = `
-            <div class="screen-area">
-                <div class="glass-pill screen-close-pill" onclick="closeModal()">✕</div>
-                <div class="screen-img-box" id="screenImgBox">
-                    <div class="spinner" id="screenSpinner" style="display:block;"></div>
-                    <img id="screenImg" class="screen-img" onclick="openImageViewer(this.src)" />
-                </div>
-                <div class="screen-controls">
-                    <div class="glass-pill screen-segments" id="screenSegments"></div>
-                    <button class="glass-pill segment-btn screen-refresh-btn" onclick="showScreenshot()">🔄</button>
-                </div>
-            </div>
-            <div class="dash-panel">
-                <div class="dash-stats" id="dashStats">
-                    <div class="stat-card text-dimmed">CPU: 加载中...</div>
-                    <div class="stat-card text-dimmed">MEM: 加载中...</div>
-                </div>
-                <h4 class="section-heading">活跃窗口大纲 (Active Windows)</h4>
-                <div class="window-list" id="dashWindows">
-                    <div class="text-dimmed text-sm" style="padding:12px;">正在获取桌面可视窗口指纹...</div>
-                </div>
-            </div>
-        `;
-    } else {
+    } else if (wasAlreadyOpen) {
+        // 刷新：显示 loading 状态
         const img = document.getElementById('screenImg');
-        if (img) img.classList.add('loading');
+        if (img) {
+            img.classList.add('loading');
+            img.style.display = 'none';
+        }
         const spin = document.getElementById('screenSpinner');
-        if (spin) spin.style.display = 'block';
+        if (spin) spin.style.display = 'flex';
     }
 
     _renderSegments();
@@ -100,9 +114,10 @@ export async function showScreenshot(modeOverride = null) {
     const title = (inst && inst.display_name) ? inst.display_name : 'Antigravity';
 
     let url = `${BASE_URL}/v1/system/screenshot?mode=${_currentScreenMode}`;
-    if (isWindow || isFull) url += `&title=${encodeURIComponent(title)}`;
+    if (_currentScreenMode === 'window' || _currentScreenMode === 'full') url += `&title=${encodeURIComponent(title)}`;
 
-    fetch(url).then(r => r.json()).then(data => {
+    // 所有请求并行发出，全部完成后解锁
+    const p1 = fetch(url).then(r => r.json()).then(data => {
         const img = document.getElementById('screenImg');
         const spin = document.getElementById('screenSpinner');
         if (!img) return;
@@ -115,41 +130,60 @@ export async function showScreenshot(modeOverride = null) {
         if (imgBox) imgBox.innerHTML = `<div class="text-danger">截图失败: ${e.message}</div>`;
     });
 
-    fetch(`${BASE_URL}/v1/system/info`).then(r => r.json()).then(data => {
-        const cpuColor = data.cpu.percent > 80 ? 'var(--danger)' : data.cpu.percent > 60 ? 'var(--warning)' : 'var(--success)';
-        const memColor = data.memory.percent > 80 ? 'var(--danger)' : data.memory.percent > 60 ? 'var(--warning)' : 'var(--success)';
-        const dashStats = document.getElementById('dashStats');
-        if (dashStats) {
-            dashStats.innerHTML = `
-                <div class="stat-card">
-                    <div class="stat-label">CPU 核心负载</div>
-                    <div class="stat-value" style="color:${cpuColor};">${data.cpu.percent}%</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">内存空间占用</div>
-                    <div class="stat-value" style="color:${memColor};">${data.memory.percent}%</div>
-                </div>
-            `;
-        }
-        if (data.display && data.display.count > 0) {
-            _monitorCountCache = data.display.count;
-            _renderSegments();
-        }
+    // SWR: 先显示缓存，再后台刷新
+    const cachedInfo = cacheGet('sys_info');
+    if (cachedInfo) _applySysInfo(cachedInfo.data);
+    const p2 = fetch(`${BASE_URL}/v1/system/info`).then(r => r.json()).then(data => {
+        cacheSet('sys_info', data);
+        _applySysInfo(data);
     }).catch(e => { });
 
-    fetch(`${BASE_URL}/v1/system/windows`).then(r => r.json()).then(data => {
-        const dashWindows = document.getElementById('dashWindows');
-        if (!dashWindows || !data.windows) return;
-        let wHtml = '';
-        const validWindows = data.windows.filter(w => w.title && !w.is_minimized);
-        validWindows.slice(0, 50).forEach(w => {
-            wHtml += `
-                <div class="window-card">
-                    <span class="window-title">🪟 ${w.title}</span>
-                    <button class="pin-btn" onclick="focusSpecificWindow(${w.hwnd}, this)">置顶</button>
-                </div>
-            `;
-        });
-        dashWindows.innerHTML = wHtml || '<div class="text-muted">无活跃窗口</div>';
+    const cachedWins = cacheGet('sys_windows');
+    if (cachedWins) _applyWindows(cachedWins.data);
+    const p3 = fetch(`${BASE_URL}/v1/system/windows`).then(r => r.json()).then(data => {
+        cacheSet('sys_windows', data);
+        _applyWindows(data);
     }).catch(e => { });
+
+    // 全部完成后解锁
+    await Promise.allSettled([p1, p2, p3]);
+    _screenshotLoading = false;
+}
+
+function _applySysInfo(data) {
+    const cpuColor = data.cpu.percent > 80 ? 'var(--danger)' : data.cpu.percent > 60 ? 'var(--warning)' : 'var(--success)';
+    const memColor = data.memory.percent > 80 ? 'var(--danger)' : data.memory.percent > 60 ? 'var(--warning)' : 'var(--success)';
+    const dashStats = document.getElementById('dashStats');
+    if (dashStats) {
+        dashStats.innerHTML = `
+            <div class="stat-card">
+                <div class="stat-label">CPU 核心负载</div>
+                <div class="stat-value" style="color:${cpuColor};">${data.cpu.percent}%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">内存空间占用</div>
+                <div class="stat-value" style="color:${memColor};">${data.memory.percent}%</div>
+            </div>
+        `;
+    }
+    if (data.display && data.display.count > 0) {
+        _monitorCountCache = data.display.count;
+        _renderSegments();
+    }
+}
+
+function _applyWindows(data) {
+    const dashWindows = document.getElementById('dashWindows');
+    if (!dashWindows || !data.windows) return;
+    let wHtml = '';
+    const validWindows = data.windows.filter(w => w.title && !w.is_minimized);
+    validWindows.slice(0, 50).forEach(w => {
+        wHtml += `
+            <div class="window-card">
+                <span class="window-title">🪟 ${w.title}</span>
+                <button class="pin-btn" onclick="focusSpecificWindow(${w.hwnd}, this)">置顶</button>
+            </div>
+        `;
+    });
+    dashWindows.innerHTML = wHtml || '<div class="text-muted">无活跃窗口</div>';
 }

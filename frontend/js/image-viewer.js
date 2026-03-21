@@ -35,7 +35,13 @@ export function initImageViewer() {
     window.openImageViewer = function (src) {
         if (!src) return;
         overlay.classList.add('active');
+        const loading = document.getElementById('imgViewerLoading');
+        if (loading) loading.classList.add('active');
+        viewImg.style.display = 'none';
+
         viewImg.onload = function () {
+            if (loading) loading.classList.remove('active');
+            viewImg.style.display = '';
             imgW = viewImg.naturalWidth;
             imgH = viewImg.naturalHeight;
             fitToScreen();
@@ -46,6 +52,9 @@ export function initImageViewer() {
 
     window.closeImageViewer = function () {
         overlay.classList.remove('active');
+        const loading = document.getElementById('imgViewerLoading');
+        if (loading) loading.classList.remove('active');
+        viewImg.style.display = '';
         viewImg.src = '';
         rotation = 0; panX = 0; panY = 0; scale = 1;
         document.body.style.overflow = '';
@@ -126,15 +135,23 @@ export function initImageViewer() {
         }
     }, { passive: false });
 
-    overlay.addEventListener('touchend', function () {
+    overlay.addEventListener('touchend', function (e) {
         clearTimeout(longPressTimer);
         isDragging = false;
-        lastPinchDist = 0;
-        // 单击关闭（没拖拽、没长按 → 延迟 300ms 等双击判断）
-        if (!dragMoved && !isLongPress) {
+        
+        // 单击关闭判断：
+        // 1. 没有单指移动 (dragMoved)
+        // 2. 没有长按触发 (isLongPress)
+        // 3. 刚刚没有进行过双指缩放 (lastPinchDist === 0)
+        if (!dragMoved && !isLongPress && lastPinchDist === 0) {
             singleTapTimer = setTimeout(() => {
                 if (overlay.classList.contains('active')) closeImageViewer();
             }, 300);
+        }
+
+        // 只有当所有手指都离开屏幕时，才完全重置缩放标记
+        if (e.touches.length === 0) {
+            lastPinchDist = 0;
         }
     });
 

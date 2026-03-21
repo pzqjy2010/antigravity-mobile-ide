@@ -1,5 +1,6 @@
 // --- 模型管理 ---
 import { state, BASE_URL, saveState, cacheSet, cacheGet } from './state.js';
+import { fetchInstances } from './instances.js';
 
 export async function fetchStatus() {
     if (!state.activePort) return;
@@ -10,6 +11,11 @@ export async function fetchStatus() {
     }
     try {
         const res = await fetch(`${BASE_URL}/v1/ls/user-status?port=${state.activePort}`);
+        if (res.status === 503) {
+            console.warn('LS 断连，自动重新发现实例...');
+            await fetchInstances();
+            return;
+        }
         const data = await res.json();
         cacheSet('status_' + state.activePort, data);
         _applyUserStatus(data);
@@ -42,6 +48,11 @@ export async function fetchModels() {
     }
     try {
         const res = await fetch(`${BASE_URL}/v1/ls/models?port=${state.activePort}`);
+        if (res.status === 503) {
+            console.warn('LS 断连，自动重新发现实例...');
+            await fetchInstances();
+            return;
+        }
         const data = await res.json();
         cacheSet('models_' + state.activePort, data);
         _applyModelsData(data);

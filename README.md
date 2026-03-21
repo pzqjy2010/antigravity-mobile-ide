@@ -30,7 +30,7 @@ antigravity-mobile-ide/
 │       ├── file-tree.js      # 文件树浏览 + 代码查看器
 │       ├── terminal.js       # 远程命令执行
 │       ├── settings.js       # 设置面板（系统探针/配额/进程管理/紧急停止）
-│       └── image-viewer.js   # 全屏图片查看器（pinch-zoom/pan/双击重置）
+│       └── image-viewer.js   # 全屏图片查看器（pinch-zoom/pan/双击复位/单击关闭/长按下载）
 ├── backend/                  # 后端
 │   ├── api_server.py         # FastAPI 服务器（30+ REST 端点 + 静态文件服务）
 │   ├── ag_core.py            # AntigravityCore 业务层
@@ -60,6 +60,17 @@ python backend/ag_core.py "say hello" --port 5490
 
 ```bash
 pip install fastapi uvicorn httpx psutil mss Pillow
+```
+
+### 推荐插件
+
+为了获得更好的使用体验，建议安装 **AntiGravity AutoAccept** 插件，它可以自动接收 AI 的操作请求，避免手动点击确认：
+
+- **插件名称**：AntiGravity AutoAccept（by YazanBaker）
+- **项目地址**：[https://github.com/yazanbaker94/AntiGravity-AutoAccept](https://github.com/yazanbaker94/AntiGravity-AutoAccept)
+
+```bash
+# 安装方式请参考插件项目的 README
 ```
 
 ### 手机端访问
@@ -103,8 +114,10 @@ Stop-Process -Id $pid -Force
 |------|------|------|
 | POST | `/v1/chat` | 对话（支持 conv_id 多轮、model 指定模型） |
 | POST | `/v1/chat/completions` | OpenAI 兼容格式 |
+| POST | `/v1/instances/{port}/cancel` | 紧急停止 AI 执行 |
 | POST | `/v1/tasks` | 异步任务（立即返回 task_id） |
 | GET | `/v1/tasks/{task_id}` | 查询任务状态 |
+| GET | `/v1/local-file?path=...` | 代理本地文件（图片等），解决浏览器 file:/// 限制 |
 
 ### 实例管理
 | 方法 | 路径 | 说明 |

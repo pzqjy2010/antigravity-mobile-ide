@@ -126,6 +126,14 @@ class ModelSwitchRequest(BaseModel):
 app.mount("/css", StaticFiles(directory=os.path.join(_FRONTEND_DIR, "css")), name="css")
 app.mount("/js", StaticFiles(directory=os.path.join(_FRONTEND_DIR, "js")), name="js")
 
+@app.middleware("http")
+async def no_cache_static(request, call_next):
+    """开发阶段：JS/CSS 文件禁止缓存"""
+    response = await call_next(request)
+    if request.url.path.startswith(("/js/", "/css/")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
 @app.get("/")
 async def serve_index():
     return FileResponse(os.path.join(_FRONTEND_DIR, "index.html"))
@@ -550,6 +558,24 @@ async def cancel_cascade(port: int, req: CancelRequest = None):
             print(f"  🛑 {method} ERROR: {e}")
             results[method] = {"ok": False, "error": str(e)}
     return {"port": port, "cascade_id": cascade_id, "results": results}
+
+
+# ─── Local File Proxy（代理本地文件供前端加载图片等）──────────
+
+@app.get("/v1/local-file")
+async def serve_local_file(path: str):
+    """代理本地文件（图片等），解决浏览器 file:/// 安全限制"""
+    import mimetypes
+    from fastapi.responses import FileResponse
+    norm = os.path.normpath(path)
+    if not os.path.isfile(norm):
+        return JSONResponse({"error": "file not found"}, status_code=404)
+    allowed_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico'}
+    ext = os.path.splitext(norm)[1].lower()
+    if ext not in allowed_exts:
+        return JSONResponse({"error": f"file type {ext} not allowed"}, status_code=403)
+    mime = mimetypes.guess_type(norm)[0] or 'application/octet-stream'
+    return FileResponse(norm, media_type=mime)
 
 
 # ─── Chat History Storage (跨设备一致性) ─────────────────────

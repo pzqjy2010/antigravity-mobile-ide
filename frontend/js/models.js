@@ -96,8 +96,10 @@ export async function initModelDropdown() {
         {
             let html = '';
             let lastVendor = '';
-            const vendorLabels = { gemini: 'Google Gemini', claude: 'Anthropic Claude', gpt: 'OpenAI GPT', other: '其他' };
-            models.forEach(m => {
+            const vendorLabels = { gemini: 'Google Gemini', claude: 'Anthropic Claude', openai: 'OpenAI', other: '其他' };
+            const vendorOrder = { gemini: 0, claude: 1, openai: 2, other: 3 };
+            const sorted = [...models].sort((a, b) => (vendorOrder[a.vendor] ?? 9) - (vendorOrder[b.vendor] ?? 9));
+            sorted.forEach(m => {
                 if (m.vendor && m.vendor !== lastVendor) {
                     const separator = lastVendor ? ' vendor-separator' : '';
                     html += `<div class="vendor-header${separator}">${vendorLabels[m.vendor] || m.vendor}</div>`;

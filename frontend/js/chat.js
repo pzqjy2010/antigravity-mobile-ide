@@ -246,8 +246,18 @@ function renderAiResponse(wrapper, data) {
         bubble.innerHTML = `<span class="text-danger">❌ 执行出错: ${data.error}</span>`;
         return;
     }
+    // 将 markdown 中的本地文件路径替换为后端代理 URL
+    let reply = data.reply || '';
+    // 匹配 ![alt](file:///path) 和 ![alt](C:\path) 格式
+    reply = reply.replace(/!\[([^\]]*)\]\((file:\/\/\/[^)]+)\)/g, (_, alt, uri) => {
+        const path = decodeURIComponent(uri.replace('file:///', ''));
+        return `![${alt}](${BASE_URL}/v1/local-file?path=${encodeURIComponent(path)})`;
+    });
+    reply = reply.replace(/!\[([^\]]*)\]\(([A-Za-z]:\\[^)]+)\)/g, (_, alt, path) => {
+        return `![${alt}](${BASE_URL}/v1/local-file?path=${encodeURIComponent(path)})`;
+    });
 
-    const replyHtml = (typeof marked !== 'undefined' && data.reply) ? marked.parse(data.reply) : (data.reply || '');
+    const replyHtml = (typeof marked !== 'undefined' && reply) ? marked.parse(reply) : reply;
     let html = `<div>${replyHtml}</div>`;
 
     if (data.images && data.images.length > 0) {

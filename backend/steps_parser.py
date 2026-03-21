@@ -40,21 +40,21 @@ class StepsParser:
         self.steps = steps or []
 
     def extract_response_text(self) -> str:
-        """提取 AI 回复文本（反向扫描，取最新有文本的 PLANNER_RESPONSE）"""
-        for step in reversed(self.steps):
+        """提取 AI 回复文本（合并所有 PLANNER_RESPONSE 的文本，保持完整上下文）"""
+        texts = []
+        for step in self.steps:
             step_type = step.get("type", "")
             if "PLANNER_RESPONSE" in step_type:
                 resp = step.get("plannerResponse", {})
                 text = resp.get("rawResponse") or resp.get("response") or ""
                 if text:
-                    return text
-            # 兼容可能的其他类型名
-            if "AI_RESPONSE" in step_type or "MODEL_RESPONSE" in step_type:
+                    texts.append(text)
+            elif "AI_RESPONSE" in step_type or "MODEL_RESPONSE" in step_type:
                 text = (step.get("response") or step.get("rawResponse")
                         or step.get("text") or "")
                 if text:
-                    return text
-        return ""
+                    texts.append(text)
+        return "\n\n".join(texts)
 
     def extract_thinking_content(self) -> Optional[str]:
         """提取 thinking/reasoning 内容"""

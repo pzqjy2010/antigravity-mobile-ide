@@ -334,12 +334,8 @@ class AntigravityCore:
                 # ── 完成检测 ──
                 last_type = new_steps[-1].get("type", "")
 
-                # CHECKPOINT → agentic 完成
+                # CHECKPOINT → cascade 真正结束（唯一可靠的结束信号）
                 if "CHECKPOINT" in last_type:
-                    return _build(new_steps)
-
-                # PLANNER_RESPONSE DONE + 有文本
-                if parser.is_response_done() and parser.extract_response_text():
                     return _build(new_steps)
 
     async def get_status(self, conv_id: str) -> dict:

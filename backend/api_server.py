@@ -472,40 +472,42 @@ _IGNORE_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv",
 _MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB
 
 
-def _walk_tree(root: str, rel: str = "", depth: int = 0, max_depth: int = 5) -> list:
-    """递归遍历目录，返回精简的树结构"""
-    if depth > max_depth:
-        return []
-    current = os.path.join(root, rel) if rel else root
-    items = []
-    try:
-        for name in sorted(os.listdir(current)):
-            if name in _IGNORE_DIRS or name.startswith("."):
-                continue
-            full = os.path.join(current, name)
-            child_rel = os.path.join(rel, name) if rel else name
-            if os.path.isdir(full):
-                children = _walk_tree(root, child_rel, depth + 1, max_depth)
-                items.append({"name": name, "path": child_rel.replace("\\", "/"),
-                              "type": "dir", "children": children})
-            else:
-                size = os.path.getsize(full)
-                items.append({"name": name, "path": child_rel.replace("\\", "/"),
-                              "type": "file", "size": size})
-    except PermissionError:
-        pass
-    return items
-
-
 @app.get("/v1/workspace/files")
-async def workspace_files(port: int = None, max_depth: int = 4):
-    """只读：列出工作区文件树"""
+async def workspace_files(port: int = None, path: str = ""):
+    """只读：列出工作区单层目录（按需加载）"""
     core = _get_core(port)
     ws_path = core.workspace_path
     if not ws_path or not os.path.isdir(ws_path):
         raise HTTPException(404, f"工作区路径无效: {ws_path}")
-    tree = _walk_tree(ws_path, max_depth=max_depth)
-    return {"workspace": ws_path, "tree": tree}
+    
+    target_dir = os.path.normpath(os.path.join(ws_path, path))
+    if not target_dir.startswith(ws_path):
+        raise HTTPException(403, "路径越界")
+    if not os.path.isdir(target_dir):
+        raise HTTPException(404, f"不是有效目录: {path}")
+
+    items = []
+    try:
+        for name in sorted(os.listdir(target_dir)):
+            if name in _IGNORE_DIRS or name.startswith("."):
+                continue
+            full = os.path.join(target_dir, name)
+            child_rel = os.path.join(path, name) if path else name
+            
+            try:
+                if os.path.isdir(full):
+                    items.append({"name": name, "path": child_rel.replace("\\", "/"),
+                                  "type": "dir", "children": None})
+                else:
+                    size = os.path.getsize(full)
+                    items.append({"name": name, "path": child_rel.replace("\\", "/"),
+                                  "type": "file", "size": size})
+            except Exception:
+                pass
+    except Exception as e:
+        raise HTTPException(500, f"读取目录失败: {str(e)}")
+
+    return {"workspace": ws_path, "path": path, "tree": items}
 
 
 @app.get("/v1/workspace/file")

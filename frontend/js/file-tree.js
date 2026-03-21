@@ -6,8 +6,9 @@ export async function fetchFileTree() {
     const container = document.getElementById('fileTreeContainer');
     container.innerHTML = '<div style="color:var(--text-muted)">加载中...</div>';
     try {
-        const res = await fetch(`${BASE_URL}/v1/workspace/files?port=${state.activePort}`);
+        const res = await fetch(`${BASE_URL}/v1/workspace/files?port=${state.activePort}&path=`);
         const data = await res.json();
+        if (data.error) throw new Error(data.detail || data.error);
         container.innerHTML = '<div class="file-tree"></div>';
         const tree = container.querySelector('.file-tree');
         renderTree(tree, data.tree || []);
@@ -21,15 +22,42 @@ function renderTree(parent, items) {
         if (item.type === 'dir') {
             const div = document.createElement('div');
             div.className = 'tree-dir';
-            div.innerHTML = `<div class="tree-item"><span class="tree-toggle open">▶</span> 📁 ${item.name}</div>
-                             <div class="tree-children"></div>`;
+            // 默认合并子目录 (collapsed)
+            div.innerHTML = `<div class="tree-item"><span class="tree-toggle">▶</span> 📁 ${item.name}</div>
+                             <div class="tree-children collapsed"></div>`;
             const toggle = div.querySelector('.tree-item');
             const children = div.querySelector('.tree-children');
-            toggle.addEventListener('click', () => {
-                children.classList.toggle('collapsed');
-                div.querySelector('.tree-toggle').classList.toggle('open');
+            const toggleIcon = div.querySelector('.tree-toggle');
+            
+            toggle.addEventListener('click', async () => {
+                const isClosed = children.classList.contains('collapsed');
+                if (isClosed) {
+                    toggleIcon.classList.add('open');
+                    children.classList.remove('collapsed');
+                    
+                    // 按需懒加载子目录
+                    if (item.children === null || item.children === undefined) {
+                        children.innerHTML = '<div class="tree-item" style="opacity:0.5"><span style="width:14px"></span> 加载中...</div>';
+                        try {
+                            const res = await fetch(`${BASE_URL}/v1/workspace/files?port=${state.activePort}&path=${encodeURIComponent(item.path)}`);
+                            const data = await res.json();
+                            if (data.error) throw new Error(data.detail || data.error);
+                            children.innerHTML = '';
+                            item.children = data.tree || []; // 缓存
+                            renderTree(children, item.children);
+                        } catch(e) {
+                            children.innerHTML = `<div class="tree-item" style="color:var(--danger)"><span style="width:14px"></span> 加载失败</div>`;
+                            item.children = null; // 允许再试
+                        }
+                    }
+                } else {
+                    toggleIcon.classList.remove('open');
+                    children.classList.add('collapsed');
+                }
             });
-            if (item.children) renderTree(children, item.children);
+            if (item.children && Array.isArray(item.children)) {
+                renderTree(children, item.children);
+            }
             parent.appendChild(div);
         } else {
             const div = document.createElement('div');

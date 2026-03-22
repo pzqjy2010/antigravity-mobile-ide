@@ -244,18 +244,30 @@ export async function sendMessage() {
 
     // 拼装最终消息：图片 @file: + 文本
     let finalMessage = val;
-    let attachedProxyUrl = null;
+    let attachedProxyUrls = [];
     if (_pendingImage) {
         const imgRef = '@file:' + _pendingImage.path;
         finalMessage = imgRef + (val ? ' ' + val : '');
-        attachedProxyUrl = _pendingImage.proxyUrl;
+        attachedProxyUrls.push(_pendingImage.proxyUrl);
         clearPendingImage();
+    }
+
+    // 自动扫描用户输入文本中的 @file: 绝对路径，如果是图片也提取出缩略图
+    const imgRegex = /@file:(.*?\.(?:png|jpg|jpeg|gif|webp|bmp))/gi;
+    let match;
+    while ((match = imgRegex.exec(finalMessage)) !== null) {
+        const path = match[1].trim();
+        const proxyUrl = `${BASE_URL}/v1/local-file?path=${encodeURIComponent(path)}`;
+        if (!attachedProxyUrls.includes(proxyUrl)) {
+            attachedProxyUrls.push(proxyUrl);
+        }
     }
 
     // 用户气泡：如果有图片则同时展示缩略图（使用后端代理 URL 以便刷新后仍可加载）
     let userBubbleContent = val || '🖼️ 图片';
-    if (attachedProxyUrl) {
-        userBubbleContent = (val ? val + '<br>' : '') + `<img src="${attachedProxyUrl}" class="user-img-attachment" alt="附件">`;
+    if (attachedProxyUrls.length > 0) {
+        const imgsHtml = attachedProxyUrls.map(u => `<img src="${u}" class="user-img-attachment" alt="附件">`).join('<br>');
+        userBubbleContent = (val ? val + '<br>' : '') + imgsHtml;
     }
     const userWrapper = appendMsg('user', '');
     userWrapper.querySelector('.bubble').innerHTML = userBubbleContent;

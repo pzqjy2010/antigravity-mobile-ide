@@ -6,6 +6,49 @@ import { cancelCascade } from './settings.js';
 // --- 图片附件状态 ---
 let _pendingImage = null; // { path: '绝对路径', filename: '文件名', previewUrl: 'blob:...' }
 
+// --- 定时轮询状态 ---
+let _versionTimer = null;   // C: 每 10 秒检查当前对话版本
+let _convListTimer = null;  // A: 每 60 秒刷新会话列表
+let _lastMtime = 0;         // 当前对话的已知 mtime
+
+export function initPolling() {
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) stopPolling();
+        else startPolling();
+    });
+    startPolling();
+}
+
+export function startPolling() {
+    stopPolling();
+    _versionTimer = setInterval(_checkCurrentConvVersion, 10000);
+    _convListTimer = setInterval(() => { fetchConversations(); }, 60000);
+}
+
+export function stopPolling() {
+    if (_versionTimer) { clearInterval(_versionTimer); _versionTimer = null; }
+    if (_convListTimer) { clearInterval(_convListTimer); _convListTimer = null; }
+}
+
+async function _checkCurrentConvVersion() {
+    // 如果手机端正在发送消息和接收流/响应，暂停后台更新，避免覆盖正在打字的动画气泡
+    if (!state.activeConvId || _chatBusy) return;
+    try {
+        const res = await fetch(`${BASE_URL}/v1/chat/history/${state.activeConvId}/version`);
+        const data = await res.json();
+        if (data.exists && data.mtime && data.mtime !== _lastMtime) {
+            if (_lastMtime !== 0) {
+                // mtime 变了，有新内容，静默重载（DOM Diff）
+                await loadChatHistory(state.activeConvId, true);
+            }
+            _lastMtime = data.mtime;
+        }
+    } catch (e) { /* 静默 */ }
+}
+
+// 切换/加载对话时重置 mtime 追踪
+function _resetMtime() { _lastMtime = 0; }
+
 // --- 会话管理 ---
 export function updateSessionLabel() {
     const convs = state.conversations || [];
@@ -84,24 +127,78 @@ export async function switchSession(convId) {
     document.getElementById('sessionDropdown').classList.remove('open');
     if (convId === state.activeConvId) return;
     state.activeConvId = convId;
+    _resetMtime();
     chatContainer.innerHTML = '<div class="loading-center">加载中...</div>';
     updateSessionLabel();
     saveState();
     await loadChatHistory(convId);
 }
 
-export async function loadChatHistory(convId) {
+export async function loadChatHistory(convId, isSilent = false) {
     try {
         const res = await fetch(`${BASE_URL}/v1/chat/history/${convId}`);
         const data = await res.json();
         if (data.found && data.messages && data.messages.length > 0) {
+            const isAutoSynced = data.auto_synced === true;
+            
+            if (isSilent) {
+                const existingMsgs = chatContainer.querySelectorAll('.msg');
+                const scrollBefore = chatContainer.scrollTop;
+                // 距离底部小于 10px 时认为处于底部状态
+                const isAtBottom = (chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight) < 10;
+                
+                data.messages.forEach((m, i) => {
+                    let expectedHtml = m.content || '';
+                    if (m.role === 'user') {
+                        if (!expectedHtml.includes('<img ')) {
+                            const temp = document.createElement('div');
+                            temp.textContent = expectedHtml;
+                            expectedHtml = temp.innerHTML; // 转译普通文本为 HTML 安全字符串
+                        }
+                    } else {
+                        if (isAutoSynced && typeof marked !== 'undefined' && !expectedHtml.includes('<div')) {
+                            expectedHtml = marked.parse(expectedHtml);
+                        }
+                    }
+                    
+                    if (i < existingMsgs.length) {
+                        const wrapper = existingMsgs[i];
+                        const bubble = wrapper.querySelector('.bubble');
+                        if (bubble && bubble.innerHTML !== expectedHtml) {
+                            bubble.innerHTML = expectedHtml;
+                            _bindImageClickEvents(bubble);
+                        }
+                    } else {
+                        const w = appendMsg(m.role || 'ai', '');
+                        const bubble = w.querySelector('.bubble');
+                        bubble.innerHTML = expectedHtml;
+                        _bindImageClickEvents(bubble);
+                    }
+                });
+                
+                // 裁切多余的旧消息（极少发生）
+                for (let i = data.messages.length; i < existingMsgs.length; i++) {
+                    existingMsgs[i].remove();
+                }
+                
+                // 恢复原生滚动状态：如果你正在上方看历史记录，保持位置；如果你一直在最底部，有新消息就吸底
+                if (isAtBottom) {
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                } else {
+                    chatContainer.scrollTop = scrollBefore;
+                }
+                
+                return;
+            }
+            
+            // 原有全量渲染逻辑
             chatContainer.innerHTML = '';
             data.messages.forEach(m => {
                 const w = appendMsg(m.role || 'ai', '');
                 const bubble = w.querySelector('.bubble');
+                const content = m.content || '';
                 if (m.role === 'user') {
                     // 历史记录可能包含图片附件的 <img> 标签
-                    const content = m.content || '';
                     if (content.includes('<img ')) {
                         bubble.innerHTML = content;
                         _bindImageClickEvents(bubble);
@@ -109,7 +206,12 @@ export async function loadChatHistory(convId) {
                         bubble.textContent = content;
                     }
                 } else {
-                    bubble.innerHTML = m.content || '';
+                    // 后端自动同步的记录是纯 markdown，需用 marked 渲染
+                    if (isAutoSynced && typeof marked !== 'undefined' && !content.includes('<div')) {
+                        bubble.innerHTML = marked.parse(content);
+                    } else {
+                        bubble.innerHTML = content;
+                    }
                     _bindImageClickEvents(bubble);
                 }
             });

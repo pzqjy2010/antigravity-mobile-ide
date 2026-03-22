@@ -76,6 +76,10 @@ async def _warmup_caches():
     asyncio.ensure_future(_do_warmup())
     # 后台每 30 秒自动刷新进程缓存
     asyncio.ensure_future(_process_cache_loop())
+    # 后台对话自动同步（电脑端 → data/chat_history/）
+    asyncio.ensure_future(_conversation_sync_loop())
+    # 后台端口监测（发现新 LS 实例）
+    asyncio.ensure_future(_port_monitor_loop())
 
 def _force_foreground(user32, hwnd):
     """通过模拟 Alt 键合法绕过 Windows 前台锁定。"""
@@ -732,6 +736,16 @@ async def list_chat_histories():
     return {"count": len(results), "histories": results}
 
 
+@app.get("/v1/chat/history/{cascade_id}/version")
+async def chat_history_version(cascade_id: str):
+    """轻量级版本检查：只返回文件元信息，供前端判断是否需要重新加载"""
+    path = _history_path(cascade_id)
+    if not os.path.exists(path):
+        return {"exists": False}
+    stat = os.stat(path)
+    return {"exists": True, "size": stat.st_size, "mtime": stat.st_mtime}
+
+
 @app.get("/v1/chat/history/{cascade_id}/timeline")
 async def get_chat_timeline(cascade_id: str, port: int = None):
     """获取会话足迹时间线（从 LS 的 Steps 数据中提取）"""
@@ -794,6 +808,16 @@ async def get_chat_timeline(cascade_id: str, port: int = None):
         # 只保留有意义的步骤（跳过太密集的 checkpoint）
         if stype == "CORTEX_STEP_TYPE_CHECKPOINT" and not detail:
             continue
+            
+        # 过滤掉 IDE 的 "Continue"
+        if stype == "CORTEX_STEP_TYPE_USER_INPUT":
+            user_input = step.get("userInput", {})
+            text = ""
+            for item in user_input.get("items", []):
+                if item.get("text"): text += item["text"]
+            if not text: text = user_input.get("userResponse", "")
+            if text and text.strip() == "Continue":
+                continue
 
         timeline.append({
             "time": ts,
@@ -1860,6 +1884,168 @@ async def kill_process(pid: int):
         raise HTTPException(404, f"进程不存在: {pid}")
     except psutil.AccessDenied:
         raise HTTPException(403, f"无权限终止进程: {pid}")
+
+
+# ─── Background Conversation Sync ────────────────────────────
+
+from steps_parser import StepsParser as _SP
+
+# 增量同步追踪：cascade_id → 已同步的 step_count
+_sync_tracker: dict[str, int] = {}
+
+
+def _steps_to_messages(steps: list[dict]) -> list[dict]:
+    """将 LS 的 steps 列表转换为 [{role, content, timestamp}] 消息列表"""
+    messages = []
+    for step in steps:
+        step_type = step.get("type", "")
+        meta = step.get("metadata", {})
+        ts = meta.get("createdAt", "")
+
+        if "USER_INPUT" in step_type:
+            user_input = step.get("userInput", {})
+            text = ""
+            # 提取用户文本：items 列表里的 text
+            for item in user_input.get("items", []):
+                if item.get("text"):
+                    text += item["text"]
+            # 旧格式兜底
+            if not text:
+                text = user_input.get("userResponse", "")
+            if text:
+                # 过滤掉 IDE 自动重试插件发送的 "Continue"
+                if text.strip() != "Continue":
+                    messages.append({"role": "user", "content": text, "timestamp": ts})
+
+        elif "PLANNER_RESPONSE" in step_type:
+            resp = step.get("plannerResponse", {})
+            text = resp.get("rawResponse") or resp.get("response") or ""
+            if text:
+                messages.append({"role": "ai", "content": text, "timestamp": ts})
+    return messages
+
+
+async def _sync_conversations_for_port(port: int):
+    """对单个端口执行一次增量对话同步"""
+    try:
+        core = _get_core(port)
+    except Exception:
+        return 0
+
+    try:
+        data = await core.rpc_call("GetAllCascadeTrajectories")
+    except Exception:
+        return 0
+
+    summaries = data.get("trajectorySummaries", {})
+    ws_path = core.workspace_path.replace("\\", "/").lower()
+    synced = 0
+
+    for cascade_id, summary in summaries.items():
+        # 过滤当前工作区
+        workspaces = summary.get("workspaces") or summary.get("trajectoryMetadata", {}).get("workspaces", [])
+        matched = False
+        for ws in workspaces:
+            uri = ws.get("workspaceFolderAbsoluteUri", "")
+            uri_path = uri.replace("file:///", "").replace("%20", " ").lower()
+            if uri_path and ws_path and uri_path.rstrip("/") == ws_path.rstrip("/"):
+                matched = True
+                break
+        if not matched:
+            continue
+
+        step_count = int(summary.get("stepCount", 0))
+        if step_count <= 0:
+            continue
+
+        # 增量检查：step_count 未变则跳过
+        if _sync_tracker.get(cascade_id, 0) >= step_count:
+            continue
+
+        # 拉取完整 steps
+        try:
+            steps_data = await core.rpc_call("GetCascadeTrajectorySteps", {"cascadeId": cascade_id})
+        except Exception:
+            continue
+
+        steps = steps_data.get("steps", [])
+        if not steps:
+            continue
+
+        messages = _steps_to_messages(steps)
+        if not messages:
+            _sync_tracker[cascade_id] = step_count
+            continue
+
+        # 写入 data/chat_history/（与现有 save_chat_history 格式一致）
+        path = _history_path(cascade_id)
+        record = {
+            "cascade_id": cascade_id,
+            "updated_at": datetime.datetime.now().isoformat(),
+            "message_count": len(messages),
+            "messages": messages,
+            "auto_synced": True,
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                _json.dump(record, f, ensure_ascii=False, indent=2)
+            _sync_tracker[cascade_id] = step_count
+            synced += 1
+        except Exception:
+            pass
+
+    return synced
+
+
+async def _conversation_sync_loop():
+    """后台每 60 秒从 LS 增量同步对话到 data/chat_history/"""
+    await asyncio.sleep(5)  # 等待初始化完成
+    print("  🔄 对话同步任务已启动（每 60 秒）")
+    while True:
+        try:
+            # 同步所有已知端口
+            ports = list(_cores.keys())
+            if not ports and _default_port:
+                ports = [_default_port]
+            total = 0
+            for port in ports:
+                total += await _sync_conversations_for_port(port)
+            if total > 0:
+                print(f"  🔄 同步了 {total} 个对话")
+        except Exception as e:
+            print(f"  🔄 同步异常: {e}")
+        await asyncio.sleep(60)
+
+
+async def _port_monitor_loop():
+    """后台每 60 秒检测新的 LS 实例端口"""
+    await asyncio.sleep(10)  # 等待初始化完成
+    print("  🔍 端口监测任务已启动（每 60 秒）")
+    while True:
+        await asyncio.sleep(60)
+        try:
+            from ls_connector import discover_ls_instances
+            new_instances = discover_ls_instances()
+            new_ports = {inst.server_port for inst in new_instances}
+            old_ports = set(_cores.keys())
+
+            added = new_ports - old_ports
+            removed = old_ports - new_ports
+
+            if added:
+                print(f"  🔍 发现新 LS 端口: {added}")
+                for port in added:
+                    try:
+                        _cores[port] = AntigravityCore(port=port)
+                    except Exception:
+                        pass
+
+            if removed:
+                print(f"  🔍 LS 端口已离线: {removed}")
+                for port in removed:
+                    _invalidate_core(port)
+        except Exception:
+            pass
 
 
 # ─── Main ────────────────────────────────────────────────────

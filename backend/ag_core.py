@@ -112,7 +112,7 @@ class AntigravityCore:
         if len(parts) != 2:
             return ""
         drive = parts[0].upper() + "\\"  # "C:\"
-        tokens = parts[1].split("_")     # ["Malong","code","Antigravity","trial","1",...]
+        tokens = parts[1].split("_")     # e.g. ["Users","workspace","project",...]
 
         # 贪心匹配：优先尝试最长的合法目录名
         path = drive

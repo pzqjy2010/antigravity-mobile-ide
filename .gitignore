@@ -1,15 +1,13 @@
 # Python
 __pycache__/
 *.pyc
-
-# 临时测试/调试脚本
-find_*.py
-test_*.py
-diag_output.txt
-workspace_list.txt
+*.pyo
+.env
+.venv/
 
 # 运行时生成
-chat_history/
+data/chat_history/
+temp/upload_data/
 logs.txt
 err.txt
 
@@ -17,5 +15,11 @@ err.txt
 *.jpg
 *.png
 
-# 大文件
+# 大文件 / 调试产物
 *.json
+diag_output.txt
+workspace_list.txt
+
+# IDE
+.vscode/
+.idea/

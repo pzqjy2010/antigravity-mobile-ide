@@ -10,6 +10,8 @@
 >
 > Licensed under [CC BY-NC-SA 4.0](LICENSE) — 非商业用途，署名，相同方式共享。
 
+[**English**](README_en.md) | [**中文**](README.md)
+
 Python 后端 + 模块化前端，封装 Antigravity Language Server 的对话能力，提供 REST API + Mobile Web IDE。
 
 ## 📸 效果演示

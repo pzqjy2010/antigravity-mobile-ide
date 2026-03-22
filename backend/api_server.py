@@ -408,9 +408,12 @@ def _parse_conversations(summaries: dict, ws_path: str) -> list:
     for cascade_id, s in summaries.items():
         workspaces = s.get("workspaces") or s.get("trajectoryMetadata", {}).get("workspaces", [])
         matched = False
+        import urllib.parse
         for ws in workspaces:
             uri = ws.get("workspaceFolderAbsoluteUri", "")
-            uri_path = uri.replace("file:///", "").replace("%20", " ").lower()
+            # 使用 unquote 解码 (例如 C%3A 变为 C:) 
+            decoded_uri = urllib.parse.unquote(uri)
+            uri_path = decoded_uri.replace("file:///", "").replace("%20", " ").lower()
             if uri_path and ws_path and uri_path.rstrip("/") == ws_path.rstrip("/"):
                 matched = True
                 break
@@ -1945,9 +1948,11 @@ async def _sync_conversations_for_port(port: int):
         # 过滤当前工作区
         workspaces = summary.get("workspaces") or summary.get("trajectoryMetadata", {}).get("workspaces", [])
         matched = False
+        import urllib.parse
         for ws in workspaces:
             uri = ws.get("workspaceFolderAbsoluteUri", "")
-            uri_path = uri.replace("file:///", "").replace("%20", " ").lower()
+            decoded_uri = urllib.parse.unquote(uri)
+            uri_path = decoded_uri.replace("file:///", "").replace("%20", " ").lower()
             if uri_path and ws_path and uri_path.rstrip("/") == ws_path.rstrip("/"):
                 matched = True
                 break

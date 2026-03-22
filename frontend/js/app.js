@@ -1,6 +1,6 @@
 // --- 入口：初始化 + 全局事件绑定 ---
 import { initDock, closeDrawer, closeModal } from './ui.js';
-import { newConversation, toggleSessionDropdown, switchSession, sendMessage } from './chat.js';
+import { newConversation, toggleSessionDropdown, switchSession, sendMessage, initImageAttach } from './chat.js';
 import { toggleInstanceDropdown, switchInstance, fetchInstances } from './instances.js';
 import { initModelDropdown, selectModel } from './models.js';
 import { showScreenshot, focusSpecificWindow } from './screenshot.js';
@@ -60,5 +60,6 @@ window.onload = () => {
     initDock();
     initModelDropdown();
     initImageViewer();
+    initImageAttach();
     fetchInstances();
 };

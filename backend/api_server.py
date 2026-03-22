@@ -566,6 +566,42 @@ async def cancel_cascade(port: int, req: CancelRequest = None):
     return {"port": port, "cascade_id": cascade_id, "results": results}
 
 
+# ─── Image Upload（图片附件上传）─────────────────────────────
+
+from fastapi import UploadFile, File
+from fastapi.responses import JSONResponse
+
+_UPLOAD_DIR = os.path.join(_PROJECT_ROOT, "temp", "upload_data")
+os.makedirs(_UPLOAD_DIR, exist_ok=True)
+
+_ALLOWED_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+
+@app.post("/v1/chat/upload-image")
+async def upload_image(file: UploadFile = File(...)):
+    """接收前端上传的图片，保存到 data/uploads/ 并返回绝对路径"""
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _ALLOWED_IMAGE_EXTS:
+        return JSONResponse({"error": f"不支持的图片格式: {ext}"}, status_code=400)
+
+    import hashlib
+    timestamp = int(time.time() * 1000)
+    content = await file.read()
+    short_hash = hashlib.md5(content).hexdigest()[:8]
+    safe_name = f"{timestamp}_{short_hash}{ext}"
+    save_path = os.path.join(_UPLOAD_DIR, safe_name)
+
+    with open(save_path, "wb") as f:
+        f.write(content)
+
+    abs_path = os.path.normpath(save_path)
+    print(f"  📎 Image uploaded: {abs_path} ({len(content)} bytes)")
+    return {
+        "path": abs_path,
+        "filename": file.filename,
+        "size": len(content),
+    }
+
+
 # ─── Local File Proxy（代理本地文件供前端加载图片等）──────────
 
 @app.get("/v1/local-file")

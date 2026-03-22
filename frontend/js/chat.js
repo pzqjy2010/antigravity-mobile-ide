@@ -3,6 +3,9 @@ import { state, BASE_URL, saveState, cacheSet, cacheGet } from './state.js';
 import { chatContainer, appendMsg, resetChatArea } from './ui.js';
 import { cancelCascade } from './settings.js';
 
+// --- 图片附件状态 ---
+let _pendingImage = null; // { path: '绝对路径', filename: '文件名', previewUrl: 'blob:...' }
+
 // --- 会话管理 ---
 export function updateSessionLabel() {
     const convs = state.conversations || [];
@@ -97,7 +100,14 @@ export async function loadChatHistory(convId) {
                 const w = appendMsg(m.role || 'ai', '');
                 const bubble = w.querySelector('.bubble');
                 if (m.role === 'user') {
-                    bubble.textContent = m.content || '';
+                    // 历史记录可能包含图片附件的 <img> 标签
+                    const content = m.content || '';
+                    if (content.includes('<img ')) {
+                        bubble.innerHTML = content;
+                        _bindImageClickEvents(bubble);
+                    } else {
+                        bubble.textContent = content;
+                    }
                 } else {
                     bubble.innerHTML = m.content || '';
                     _bindImageClickEvents(bubble);
@@ -151,6 +161,72 @@ async function loadTimeline(convId) {
 let _chatBusy = false;
 let _chatAbortController = null;
 
+// --- 图片附件功能 ---
+export function initImageAttach() {
+    const attachBtn = document.getElementById('attachBtn');
+    const fileInput = document.getElementById('imageFileInput');
+    if (attachBtn && fileInput) {
+        attachBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', onImageSelected);
+    }
+}
+
+async function onImageSelected(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    // 生成本地预览
+    const previewUrl = URL.createObjectURL(file);
+    const bar = document.getElementById('imagePreviewBar');
+
+    bar.innerHTML = `
+        <div class="img-preview-thumb">
+            <img src="${previewUrl}" alt="preview">
+            <button class="remove-img" id="removeImgBtn">✕</button>
+        </div>
+        <div class="img-preview-info">
+            <div class="filename">${file.name}</div>
+            <div>上传中...</div>
+        </div>
+    `;
+    bar.style.display = 'flex';
+
+    document.getElementById('removeImgBtn').onclick = () => {
+        clearPendingImage();
+    };
+
+    // 上传到后端
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch(`${BASE_URL}/v1/chat/upload-image`, {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        _pendingImage = { path: data.path, filename: data.filename, previewUrl,
+                          proxyUrl: `${BASE_URL}/v1/local-file?path=${encodeURIComponent(data.path)}` };
+        const info = bar.querySelector('.img-preview-info');
+        if (info) info.innerHTML = `<div class="filename">${file.name}</div><div style="color:var(--success)">✅ 已就绪</div>`;
+    } catch (err) {
+        console.error('Image upload failed:', err);
+        const info = bar.querySelector('.img-preview-info');
+        if (info) info.innerHTML = `<div class="filename">${file.name}</div><div style="color:var(--danger)">❌ 上传失败</div>`;
+        _pendingImage = null;
+    }
+
+    // 重置 file input 以便重复选择同一张图
+    e.target.value = '';
+}
+
+function clearPendingImage() {
+    _pendingImage = null;
+    const bar = document.getElementById('imagePreviewBar');
+    if (bar) { bar.style.display = 'none'; bar.innerHTML = ''; }
+}
+
 export async function sendMessage() {
     const inputStr = document.getElementById('chatInput');
     if (_chatBusy) {
@@ -162,11 +238,27 @@ export async function sendMessage() {
         return;
     }
     const val = inputStr.value.trim();
-    if (!val) return;
+    if (!val && !_pendingImage) return;
     inputStr.value = '';
     _setChatBusy(true);
 
-    appendMsg('user', val);
+    // 拼装最终消息：图片 @file: + 文本
+    let finalMessage = val;
+    let attachedProxyUrl = null;
+    if (_pendingImage) {
+        const imgRef = '@file:' + _pendingImage.path;
+        finalMessage = imgRef + (val ? ' ' + val : '');
+        attachedProxyUrl = _pendingImage.proxyUrl;
+        clearPendingImage();
+    }
+
+    // 用户气泡：如果有图片则同时展示缩略图（使用后端代理 URL 以便刷新后仍可加载）
+    let userBubbleContent = val || '🖼️ 图片';
+    if (attachedProxyUrl) {
+        userBubbleContent = (val ? val + '<br>' : '') + `<img src="${attachedProxyUrl}" class="user-img-attachment" alt="附件">`;
+    }
+    const userWrapper = appendMsg('user', '');
+    userWrapper.querySelector('.bubble').innerHTML = userBubbleContent;
     const aiWrapper = appendMsg('ai', '<div class="typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>');
 
     _chatAbortController = new AbortController();
@@ -175,7 +267,7 @@ export async function sendMessage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                message: val,
+                message: finalMessage,
                 conv_id: state.activeConvId,
                 port: state.activePort,
                 model: state.activeModel || undefined
@@ -215,7 +307,7 @@ function _archiveCurrentChat() {
         if (!bubble) return;
         messages.push({
             role: role,
-            content: role === 'user' ? bubble.textContent : bubble.innerHTML,
+            content: bubble.innerHTML,
             timestamp: new Date().toISOString()
         });
     });

@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Antigravity Mobile IDE</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <link rel="stylesheet" href="css/style.css?v=8">
+    <link rel="stylesheet" href="css/style.css?v=11">
 </head>
 
 <body>
@@ -51,9 +51,14 @@
         </div>
     </main>
 
+    <!-- 图片预览条 -->
+    <div id="imagePreviewBar" style="display:none;"></div>
+
     <!-- 输入框 -->
     <div class="input-bar glass">
+        <input type="file" id="imageFileInput" accept="image/*" style="display:none;">
         <input type="text" id="chatInput" placeholder="输入你想让 AI 做的事情...">
+        <button class="attach-btn" id="attachBtn" title="附加图片">📎</button>
         <button class="send-btn" id="sendBtn">➤</button>
     </div>
 
@@ -143,7 +148,7 @@
         <div class="menu-item" id="menuMentionFile">💬 @ 引用到聊天</div>
     </div>
 
-    <script type="module" src="js/app.js?v=10"></script>
+    <script type="module" src="js/app.js?v=13"></script>
 </body>
 
 </html>

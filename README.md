@@ -199,7 +199,7 @@ print(r.json()["reply"])
 # 指定模型
 r = httpx.post("http://localhost:16601/v1/chat", json={
     "message": "explain this code",
-    "model": "gemini-2.5-pro",
+    "model": "MODEL_PLACEHOLDER_M37",  # 例如: gemini-3.1-pro
 })
 
 # 获取 AG IDE 窗口

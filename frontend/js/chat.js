@@ -263,11 +263,14 @@ export async function sendMessage() {
         }
     }
 
-    // 用户气泡：如果有图片则同时展示缩略图（使用后端代理 URL 以便刷新后仍可加载）
-    let userBubbleContent = val || '🖼️ 图片';
+    // 用户气泡：展示完整消息（含 @file: 路径），同时将图片路径渲染为缩略图
+    // 将 @file:路径 替换为可读的标签 + 缩略图
+    let userBubbleContent = finalMessage || '🖼️ 图片';
     if (attachedProxyUrls.length > 0) {
+        // 将文本中的 @file:xxx 替换为简短标签
+        let displayText = finalMessage.replace(/@file:[^\s]+/g, '').trim();
         const imgsHtml = attachedProxyUrls.map(u => `<img src="${u}" class="user-img-attachment" alt="附件">`).join('<br>');
-        userBubbleContent = (val ? val + '<br>' : '') + imgsHtml;
+        userBubbleContent = (displayText ? displayText + '<br>' : '') + imgsHtml;
     }
     const userWrapper = appendMsg('user', '');
     userWrapper.querySelector('.bubble').innerHTML = userBubbleContent;

@@ -37,6 +37,8 @@ antigravity-mobile-ide/
 │   └── steps_parser.py       # Steps JSON 解析器
 ├── data/
 │   └── chat_history/         # 聊天记录持久化存储
+├── temp/
+│   └── upload_data/          # 用户上传的图片附件临时存储
 ├── tests/                    # 测试文件
 └── docs/                     # 设计文档
 ```
@@ -81,6 +83,23 @@ pip install fastapi uvicorn httpx psutil mss Pillow
 http://<电脑IP>:16601/
 ```
 
+### 安全部署建议：使用 Tailscale 建立局域网
+
+由于本项目通过 HTTP 明文传输与 LS 实例通信，直接暴露在公网或不可信的 Wi-Fi 下 **存在安全风险**（OAuth Token、CSRF Token 等敏感信息可能被抦截）。
+
+**强烈建议**使用 [Tailscale](https://tailscale.com/) 建立加密的零配置虚拟局域网：
+
+```bash
+# 1. 在电脑和手机上分别安装 Tailscale 并登录同一账户
+# 2. 电脑开启服务后，手机通过 Tailscale 分配的内网 IP 访问
+http://100.x.x.x:16601/
+```
+
+优势：
+- **端到端加密**：所有流量通过 WireGuard 隧道传输，无需配置 SSL 证书
+- **零配置**：无需手动配置端口转发或防火墙规则
+- **跨网络访问**：即使手机和电脑不在同一物理网络，也能安全访问
+
 ### 后台运行（Windows）
 
 ```powershell
@@ -114,10 +133,13 @@ Stop-Process -Id $pid -Force
 |------|------|------|
 | POST | `/v1/chat` | 对话（支持 conv_id 多轮、model 指定模型） |
 | POST | `/v1/chat/completions` | OpenAI 兼容格式 |
+| POST | `/v1/chat/upload-image` | 上传图片附件（保存至 temp/upload_data，返回绝对路径） |
 | POST | `/v1/instances/{port}/cancel` | 紧急停止 AI 执行 |
 | POST | `/v1/tasks` | 异步任务（立即返回 task_id） |
 | GET | `/v1/tasks/{task_id}` | 查询任务状态 |
 | GET | `/v1/local-file?path=...` | 代理本地文件（图片等），解决浏览器 file:/// 限制 |
+| GET | `/v1/chat/history/{conv_id}` | 获取聊天记录（含图片附件） |
+| POST | `/v1/chat/history/{conv_id}` | 保存/更新聊天记录 |
 
 ### 实例管理
 | 方法 | 路径 | 说明 |
@@ -182,6 +204,10 @@ Stop-Process -Id $pid -Force
 - `app.js` 统一导入所有模块，通过 `window.xxx = fn` 暴露给 HTML `onclick`
 - `state.js` 实现 stale-while-revalidate 缓存，前端也有"秒开"能力
 - CSS 全部集中在 `style.css`，JS innerHTML 中只使用语义化 class，**对大模型阅读友好**
+
+**图片附件对话**：支持通过 📎 按钮上传图片或直接输入 `@file:图片路径` 发送给 AI。前端自动扫描 `@file:` 中的图片后缀，生成缩略图展示并通过后端代理 URL 持久化到聊天记录中。
+
+**文件树右键菜单**：每个文件/文件夹旁提供 `⋮` 操作菜单，支持刷新目录、复制路径、`@file:` 引用到聊天。
 
 **模型适配**：`/v1/ls/models` 为纯透传（1 小时 TTL 缓存），前端通过 `getVendor()` 关键词分类器动态分组（Gemini → Claude → GPT → Other），无需随模型升级手动维护。
 

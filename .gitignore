@@ -11,9 +11,12 @@ temp/upload_data/
 logs.txt
 err.txt
 
-# 截图缓存
+# 截图缓存（运行时产生的临时截图）
 *.jpg
 *.png
+# 但 docs/screenshots/ 下的截图需要入库
+!docs/screenshots/*.jpg
+!docs/screenshots/*.png
 
 # 大文件 / 调试产物
 *.json

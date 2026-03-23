@@ -12,8 +12,7 @@ export async function fetchStatus() {
     try {
         const res = await fetch(`${BASE_URL}/v1/ls/user-status?port=${state.activePort}`);
         if (res.status === 503) {
-            console.warn('LS 断连，自动重新发现实例...');
-            await fetchInstances();
+            console.warn(`LS 端口 ${state.activePort} 不可达 (503)`);
             return;
         }
         const data = await res.json();
@@ -49,8 +48,7 @@ export async function fetchModels() {
     try {
         const res = await fetch(`${BASE_URL}/v1/ls/models?port=${state.activePort}`);
         if (res.status === 503) {
-            console.warn('LS 断连，自动重新发现实例...');
-            await fetchInstances();
+            console.warn(`LS 端口 ${state.activePort} 不可达 (503)`);
             return;
         }
         const data = await res.json();

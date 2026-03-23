@@ -8,6 +8,7 @@ __pycache__/
 # 运行时生成
 data/chat_history/
 temp/upload_data/
+*.log
 logs.txt
 err.txt
 

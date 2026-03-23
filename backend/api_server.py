@@ -56,6 +56,9 @@ _cores: dict[int, AntigravityCore] = {}
 _tasks: dict[str, dict] = {}  # task_id -> {status, result, ...}
 _default_port: int = 0
 
+# 全局 LS 实例列表（由 _port_monitor_loop 维护，/v1/instances 读取）
+_discovered_instances: list = []
+
 
 @app.on_event("startup")
 async def _warmup_caches():
@@ -269,7 +272,7 @@ async def health():
         core = _get_core()
         return {
             "status": "ok",
-            "ls_count": len(core.get_instances()),
+            "ls_count": len(_discovered_instances),
             "version": "0.1.0",
         }
     except Exception as e:
@@ -278,12 +281,53 @@ async def health():
 
 @app.get("/v1/instances")
 async def list_instances():
-    core = _get_core()
-    instances = core.get_instances()
-    for inst in instances:
-        ws = inst.get("workspace", "")
-        inst["display_name"] = _decode_workspace_name(ws)
+    global _discovered_instances
+    # 首次访问时初始化
+    if not _discovered_instances:
+        _refresh_discovered_instances()
+    instances = []
+    for inst in _discovered_instances:
+        d = {
+            "pid": inst.pid,
+            "port": inst.server_port,
+            "workspace": getattr(inst, "workspace_id", ""),
+            "ext_port": getattr(inst, "ext_port", 0),
+        }
+        d["display_name"] = _decode_workspace_name(d["workspace"])
+        instances.append(d)
     return {"count": len(instances), "instances": instances}
+
+
+def _refresh_discovered_instances():
+    """重新扫描 LS 实例并更新全局列表（含 RPC 级健康检测）"""
+    global _discovered_instances
+    from ls_connector import discover_ls_instances
+    import httpx
+    all_instances = discover_ls_instances()
+    all_ports = [inst.server_port for inst in all_instances]
+    print(f"  🔍 扫描到端口: {all_ports}")
+    alive = []
+    for inst in all_instances:
+        port = inst.server_port
+        csrf = getattr(inst, "csrf_token", "")
+        try:
+            url = f"https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/GetUserStatus"
+            r = httpx.post(url, json={},
+                           headers={
+                               "content-type": "application/json",
+                               "connect-protocol-version": "1",
+                               "x-codeium-csrf-token": csrf,
+                           },
+                           verify=False, timeout=3)
+            if r.status_code == 200:
+                alive.append(inst)
+            else:
+                print(f"  ⚠️ 端口 {port} RPC 返回 {r.status_code}，已过滤")
+        except Exception as e:
+            print(f"  ⚠️ 端口 {port} 连接失败({type(e).__name__})，已过滤")
+    alive_ports = [inst.server_port for inst in alive]
+    print(f"  ✅ 存活端口: {alive_ports}")
+    _discovered_instances = alive
 
 
 def _decode_workspace_name(ws: str) -> str:
@@ -391,11 +435,18 @@ async def switch_model(port: int, req: ModelSwitchRequest):
 
 @app.post("/v1/instances/refresh")
 async def refresh_instances():
-    core = _get_core()
-    result = core.refresh_instances()
-    # 清除缓存的 core 实例
+    # 重新扫描并更新全局列表 + 清除旧 core 缓存
+    from ls_connector import discover_ls_instances
+    old_ports = {inst.server_port for inst in _discovered_instances}
+    _refresh_discovered_instances()
+    new_ports = {inst.server_port for inst in _discovered_instances}
     _cores.clear()
-    return result
+    return {
+        "previous_count": len(old_ports),
+        "current_count": len(new_ports),
+        "new_ports": list(new_ports - old_ports),
+        "removed_ports": list(old_ports - new_ports),
+    }
 
 
 # 会话列表增量缓存：首次全量拉取后只合并新增/更新的条目
@@ -2008,8 +2059,8 @@ async def _conversation_sync_loop():
     print("  🔄 对话同步任务已启动（每 60 秒）")
     while True:
         try:
-            # 同步所有已知端口
-            ports = list(_cores.keys())
+            # 同步所有已知端口（用全局实例列表，避免访问旧端口）
+            ports = list({inst.server_port for inst in _discovered_instances})
             if not ports and _default_port:
                 ports = [_default_port]
             total = 0
@@ -2024,15 +2075,19 @@ async def _conversation_sync_loop():
 
 async def _port_monitor_loop():
     """后台每 60 秒检测新的 LS 实例端口"""
+    global _discovered_instances
     await asyncio.sleep(10)  # 等待初始化完成
+    # 初始化全局实例列表
+    _refresh_discovered_instances()
     print("  🔍 端口监测任务已启动（每 60 秒）")
     while True:
         await asyncio.sleep(60)
         try:
-            from ls_connector import discover_ls_instances
-            new_instances = discover_ls_instances()
-            new_ports = {inst.server_port for inst in new_instances}
-            old_ports = set(_cores.keys())
+            old_ports = {inst.server_port for inst in _discovered_instances}
+
+            # 重新扫描并更新全局列表
+            _refresh_discovered_instances()
+            new_ports = {inst.server_port for inst in _discovered_instances}
 
             added = new_ports - old_ports
             removed = old_ports - new_ports

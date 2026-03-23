@@ -308,23 +308,52 @@ def _refresh_discovered_instances():
     print(f"  🔍 扫描到端口: {all_ports}")
     alive = []
     for inst in all_instances:
-        port = inst.server_port
         csrf = getattr(inst, "csrf_token", "")
-        try:
+        # 如果 ls_connector 提供了所有监听端口，我们优先试推断的 server_port，失败再试其他的
+        candidate_ports = [inst.server_port] if hasattr(inst, "server_port") else []
+        if hasattr(inst, "listening_ports") and inst.listening_ports:
+            for p in inst.listening_ports:
+                if p not in candidate_ports:
+                    candidate_ports.append(p)
+                    
+        ok = False
+        final_port = None
+        for port in candidate_ports:
+            # 过滤掉已知不是 RPC 的特定端口 (例如 extension port)
+            ext_port = getattr(inst, "extension_server_port", -1)
+            if port == ext_port and len(candidate_ports) > 1:
+                continue
+                
             url = f"https://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/GetUserStatus"
-            r = httpx.post(url, json={},
-                           headers={
-                               "content-type": "application/json",
-                               "connect-protocol-version": "1",
-                               "x-codeium-csrf-token": csrf,
-                           },
-                           verify=False, timeout=3)
-            if r.status_code == 200:
-                alive.append(inst)
-            else:
-                print(f"  ⚠️ 端口 {port} RPC 返回 {r.status_code}，已过滤")
-        except Exception as e:
-            print(f"  ⚠️ 端口 {port} 连接失败({type(e).__name__})，已过滤")
+            headers = {
+                "content-type": "application/json",
+                "connect-protocol-version": "1",
+                "x-codeium-csrf-token": csrf,
+            }
+            
+            port_ok = False
+            for attempt in range(2):
+                try:
+                    r = httpx.post(url, json={}, headers=headers, verify=False, timeout=3)
+                    if r.status_code == 200:
+                        port_ok = True
+                        break
+                except Exception as e:
+                    if attempt == 0 and port == candidate_ports[0]:
+                        import time; time.sleep(1)  # 首选端口可能是刚启动，等1秒
+                    else:
+                        break # SSL或连接被拒，不用再试同端口了
+                        
+            if port_ok:
+                ok = True
+                final_port = port
+                break
+                
+        if ok:
+            inst.server_port = final_port # 更新真正的有效端口
+            alive.append(inst)
+        else:
+            print(f"  ⚠️ 实例 PID={getattr(inst, 'pid', '?')} 尝试了 {candidate_ports} 均连接失败，已过滤")
     alive_ports = [inst.server_port for inst in alive]
     print(f"  ✅ 存活端口: {alive_ports}")
     _discovered_instances = alive

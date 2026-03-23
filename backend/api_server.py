@@ -1995,6 +1995,28 @@ def _steps_to_messages(steps: list[dict]) -> list[dict]:
                     messages[-1]["content"] += "\n\n" + text
                 else:
                     messages.append({"role": "ai", "content": text, "timestamp": ts})
+
+        elif "GENERATE_IMAGE" in step_type:
+            gi = step.get("generateImage", {})
+            media = gi.get("generatedMedia", {})
+            uri = media.get("uri", "")
+            prompt = gi.get("prompt", "")
+            name = gi.get("imageName", "")
+            if uri:
+                import urllib.parse
+                encoded_uri = urllib.parse.quote(uri, safe="")
+                img_html = (
+                    f'<div class="ai-generated-image-container" style="margin-top:10px;">'
+                    f'<img src="/v1/chat/images?uri={encoded_uri}" alt="{name}" '
+                    f'title="{prompt}" style="max-width:100%;border-radius:8px;'
+                    f'border:1px solid var(--border-color);cursor:pointer;" />'
+                    f'<div style="font-size:0.85em;color:var(--text-color);opacity:0.7;margin-top:5px;">{prompt}</div>'
+                    f'</div>'
+                )
+                if messages and messages[-1]["role"] == "ai":
+                    messages[-1]["content"] += "\n\n" + img_html
+                else:
+                    messages.append({"role": "ai", "content": img_html, "timestamp": ts})
     return messages
 
 

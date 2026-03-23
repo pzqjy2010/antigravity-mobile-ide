@@ -198,9 +198,24 @@ export async function loadChatHistory(convId, isSilent = false) {
                 const bubble = w.querySelector('.bubble');
                 const content = m.content || '';
                 if (m.role === 'user') {
-                    // 历史记录可能包含图片附件的 <img> 标签
+                    // 历史记录可能包含图片附件的 <img> 标签或 @file: 引用
                     if (content.includes('<img ')) {
                         bubble.innerHTML = content;
+                        _bindImageClickEvents(bubble);
+                    } else if (/@file:.*?\.(png|jpg|jpeg|gif|webp|bmp)/i.test(content)) {
+                        // 解析 @file:path 为缩略图
+                        const imgRegex = /@file:(.*?\.(?:png|jpg|jpeg|gif|webp|bmp))/gi;
+                        let displayText = content.replace(/@file:[^\s]+/g, '').trim();
+                        // 去重：合并的连续用户消息可能导致重复文本
+                        displayText = [...new Set(displayText.split(/\n+/).map(l => l.trim()).filter(l => l))].join('\n');
+                        let imgsHtml = '';
+                        let match;
+                        while ((match = imgRegex.exec(content)) !== null) {
+                            const proxyUrl = `${BASE_URL}/v1/local-file?path=${encodeURIComponent(match[1])}`;
+                            imgsHtml += `<img src="${proxyUrl}" class="user-img-attachment" alt="附件" style="max-width:100%;border-radius:8px;margin-top:6px;">`;
+                        }
+                        const safeText = displayText ? (() => { const d = document.createElement('div'); d.textContent = displayText; return d.innerHTML; })() : '';
+                        bubble.innerHTML = (safeText ? safeText + '<br>' : '') + imgsHtml;
                         _bindImageClickEvents(bubble);
                     } else {
                         bubble.textContent = content;

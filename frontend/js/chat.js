@@ -34,7 +34,7 @@ async function _checkCurrentConvVersion() {
     // 如果手机端正在发送消息和接收流/响应，暂停后台更新，避免覆盖正在打字的动画气泡
     if (!state.activeConvId || _chatBusy) return;
     try {
-        const res = await fetch(`${BASE_URL}/v1/chat/history/${state.activeConvId}/version`);
+        const res = await fetch(`${BASE_URL}/v1/chat/history/${state.activeConvId}/version?port=${state.activePort}`);
         const data = await res.json();
         if (data.exists && data.mtime && data.mtime !== _lastMtime) {
             if (_lastMtime !== 0) {

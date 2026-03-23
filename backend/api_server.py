@@ -791,8 +791,24 @@ async def list_chat_histories():
 
 
 @app.get("/v1/chat/history/{cascade_id}/version")
-async def chat_history_version(cascade_id: str):
-    """轻量级版本检查：只返回文件元信息，供前端判断是否需要重新加载"""
+async def chat_history_version(cascade_id: str, port: int = None):
+    """轻量级版本检查：检查 LS 是否有新 step，有则即时同步"""
+    # 1. 向 LS 查询最新 step count
+    p = port or _default_port
+    try:
+        core = _get_core(p)
+        data = await core.rpc_call("GetAllCascadeTrajectories")
+        summaries = data.get("trajectorySummaries", {})
+        if cascade_id in summaries:
+            ls_step_count = int(summaries[cascade_id].get("stepCount", 0))
+            local_step_count = _sync_tracker.get(cascade_id, 0)
+            if ls_step_count > local_step_count:
+                # 有新 step，立即同步这个对话
+                await _sync_single_conversation(p, cascade_id, summaries[cascade_id])
+    except Exception:
+        pass
+
+    # 2. 返回文件元信息供前端判断是否重载
     path = _history_path(cascade_id)
     if not os.path.exists(path):
         return {"exists": False}
@@ -1949,7 +1965,7 @@ _sync_tracker: dict[str, int] = {}
 
 
 def _steps_to_messages(steps: list[dict]) -> list[dict]:
-    """将 LS 的 steps 列表转换为 [{role, content, timestamp}] 消息列表"""
+    """将 LS 的 steps 列表转换为 [{role, content, timestamp}] 消息列表（合并连续同角色）"""
     messages = []
     for step in steps:
         step_type = step.get("type", "")
@@ -1959,24 +1975,60 @@ def _steps_to_messages(steps: list[dict]) -> list[dict]:
         if "USER_INPUT" in step_type:
             user_input = step.get("userInput", {})
             text = ""
-            # 提取用户文本：items 列表里的 text
             for item in user_input.get("items", []):
                 if item.get("text"):
                     text += item["text"]
-            # 旧格式兜底
             if not text:
                 text = user_input.get("userResponse", "")
             if text:
-                # 过滤掉 IDE 自动重试插件发送的 "Continue"
                 if text.strip() != "Continue":
-                    messages.append({"role": "user", "content": text, "timestamp": ts})
+                    if messages and messages[-1]["role"] == "user":
+                        messages[-1]["content"] += "\n\n" + text
+                    else:
+                        messages.append({"role": "user", "content": text, "timestamp": ts})
 
         elif "PLANNER_RESPONSE" in step_type:
             resp = step.get("plannerResponse", {})
             text = resp.get("rawResponse") or resp.get("response") or ""
             if text:
-                messages.append({"role": "ai", "content": text, "timestamp": ts})
+                if messages and messages[-1]["role"] == "ai":
+                    messages[-1]["content"] += "\n\n" + text
+                else:
+                    messages.append({"role": "ai", "content": text, "timestamp": ts})
     return messages
+
+
+async def _sync_single_conversation(port: int, cascade_id: str, summary: dict):
+    """即时同步单个对话（供 version 端点调用）"""
+    step_count = int(summary.get("stepCount", 0))
+    if step_count <= 0:
+        return
+    core = _get_core(port)
+    try:
+        steps_data = await core.rpc_call("GetCascadeTrajectorySteps", {"cascadeId": cascade_id})
+    except Exception:
+        return
+    steps = steps_data.get("steps", [])
+    if not steps:
+        return
+    messages = _steps_to_messages(steps)
+    if not messages:
+        _sync_tracker[cascade_id] = step_count
+        return
+    path = _history_path(cascade_id)
+    record = {
+        "cascade_id": cascade_id,
+        "updated_at": datetime.datetime.now().isoformat(),
+        "message_count": len(messages),
+        "messages": messages,
+        "auto_synced": True,
+    }
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(record, f, ensure_ascii=False, indent=2)
+        _sync_tracker[cascade_id] = step_count
+    except Exception:
+        pass
 
 
 async def _sync_conversations_for_port(port: int):
